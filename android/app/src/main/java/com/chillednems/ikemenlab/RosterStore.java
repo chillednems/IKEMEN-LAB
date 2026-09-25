@@ -39,7 +39,12 @@ public final class RosterStore {
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(previous, offset, previous.length - offset)).toString();
         } catch (CharacterCodingException invalidUtf8) {
-            encoding = Charset.forName("windows-1252");
+            // ISO-8859-1 maps every byte 1:1. Editing an ASCII roster reference
+            // then encoding with it preserves unrelated Shift_JIS/CP1252 bytes.
+            // The legacy charset is unknown, so non-ASCII references cannot be added safely.
+            if (!StandardCharsets.US_ASCII.newEncoder().canEncode(item.reference))
+                throw new IOException("Cannot edit a non-ASCII reference in a legacy-encoded select.def");
+            encoding = StandardCharsets.ISO_8859_1;
             content = new String(previous, encoding);
         }
         SelectDefEditor editor = new SelectDefEditor(content);

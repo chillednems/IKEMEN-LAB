@@ -38,14 +38,30 @@ public final class LibraryScanner {
     public static String readText(File file) throws IOException {
         if (file.length() > 2 * 1024 * 1024) throw new IOException("Metadata file is too large: " + file.getName());
         byte[] bytes = Files.readAllBytes(file.toPath());
-        for (String encoding : new String[] {"UTF-8", "windows-1252", "Shift_JIS", "ISO-8859-1"}) {
-            try {
-                String decoded = Charset.forName(encoding).newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-                return decoded.startsWith("\ufeff") ? decoded.substring(1) : decoded;
-            } catch (CharacterCodingException ignored) { }
+        String utf8 = decode(bytes, StandardCharsets.UTF_8);
+        if (utf8 != null) return utf8.startsWith("\ufeff") ? utf8.substring(1) : utf8;
+        String shiftJis = decode(bytes, Charset.forName("Shift_JIS"));
+        // CP1252 accepts almost every byte sequence, including Shift_JIS bytes.
+        // Prefer strict Shift_JIS only with multiple Japanese script characters.
+        if (shiftJis != null && japaneseCharacters(shiftJis) >= 2) return shiftJis;
+        String western = decode(bytes, Charset.forName("windows-1252"));
+        return western != null ? western : new String(bytes, StandardCharsets.ISO_8859_1);
+    }
+
+    private static String decode(byte[] bytes, Charset charset) {
+        try {
+            return charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException invalid) { return null; }
+    }
+
+    private static int japaneseCharacters(String text) {
+        int count = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char value = text.charAt(i);
+            if ((value >= '\u3040' && value <= '\u30ff') || (value >= '\u4e00' && value <= '\u9fff')) count++;
         }
-        return new String(bytes, StandardCharsets.UTF_8);
+        return count;
     }
 
     private static File[] sorted(File folder) {

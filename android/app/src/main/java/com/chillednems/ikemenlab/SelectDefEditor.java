@@ -16,13 +16,15 @@ public final class SelectDefEditor {
     private final String newline;
 
     public SelectDefEditor(String content) {
-        newline = content.contains("\r\n") ? "\r\n" : "\n";
+        newline = content.contains("\r\n") ? "\r\n" : content.contains("\r") ? "\r" : "\n";
         int start = 0;
         for (int i = 0; i < content.length(); i++) {
-            if (content.charAt(i) == '\n') {
-                int end = i > start && content.charAt(i - 1) == '\r' ? i - 1 : i;
-                lines.add(new Line(content.substring(start, end), content.substring(end, i + 1)));
-                start = i + 1;
+            char current = content.charAt(i);
+            if (current == '\n' || current == '\r') {
+                int end = current == '\r' && i + 1 < content.length() && content.charAt(i + 1) == '\n' ? i + 2 : i + 1;
+                lines.add(new Line(content.substring(start, i), content.substring(i, end)));
+                i = end - 1;
+                start = end;
             }
         }
         if (start < content.length()) lines.add(new Line(content.substring(start), ""));

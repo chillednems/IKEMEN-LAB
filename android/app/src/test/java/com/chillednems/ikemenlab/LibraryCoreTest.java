@@ -50,6 +50,14 @@ public final class LibraryCoreTest {
         assertEquals("[Characters]\n;KFM/KFM.def\nKFM/alternate.def\n", editor.content());
     }
 
+    @Test public void loneCrRosterIsEditedWithoutDuplicateSection() {
+        String original = "[Characters]\rKFM/KFM.def\r[Options]\rkeep=1\r";
+        SelectDefEditor editor = new SelectDefEditor(original);
+        assertEquals(Boolean.TRUE, editor.isEnabled("characters", "KFM/KFM.def"));
+        editor.setEnabled("characters", "KFM/KFM.def", false);
+        assertEquals("[Characters]\r;KFM/KFM.def\r[Options]\rkeep=1\r", editor.content());
+    }
+
     @Test public void scannerHandlesMixedCaseFoldersNestedStagesAndBackup() throws Exception {
         File root = temporary.newFolder("game");
         File character = new File(root, "ChArS/KFM");
@@ -98,6 +106,23 @@ public final class LibraryCoreTest {
                 new String(Files.readAllBytes(select.toPath()), java.nio.charset.Charset.forName("windows-1252")));
     }
 
+    @Test public void shiftJisRosterEditPreservesUnrelatedBytes() throws Exception {
+        File root = temporary.newFolder("shiftjis");
+        File data = new File(root, "data"); assertTrue(data.mkdirs());
+        File select = new File(data, "select.def");
+        java.nio.charset.Charset shiftJis = java.nio.charset.Charset.forName("Shift_JIS");
+        String original = "; 日本語の説明\r\n[Characters]\r\nKFM/KFM.def\r\n[Options]\r\nopaque = 保存\r\n";
+        byte[] before = original.getBytes(shiftJis);
+        Files.write(select.toPath(), before);
+        LibraryScanner.Item item = new LibraryScanner.Item("characters", "KFM/KFM.def", "KFM", "Author", "unused", true);
+        RosterStore.setEnabled(root, item, false);
+        byte[] after = Files.readAllBytes(select.toPath());
+        assertArrayEquals(original.replace("KFM/KFM.def", ";KFM/KFM.def").getBytes(shiftJis), after);
+        File[] backups = data.listFiles((dir, name) -> name.startsWith("select.def.backup."));
+        assertNotNull(backups); assertEquals(1, backups.length);
+        assertArrayEquals(before, Files.readAllBytes(backups[0].toPath()));
+    }
+
     @Test public void scannerReadsUtf8BomSelect() throws Exception {
         File root = temporary.newFolder("bom");
         File character = new File(root, "chars/KFM"); File stages = new File(root, "stages"); File data = new File(root, "data");
@@ -105,6 +130,13 @@ public final class LibraryCoreTest {
         Files.write(new File(character, "KFM.def").toPath(), "[Info]\nname=KFM\n".getBytes(StandardCharsets.UTF_8));
         Files.write(new File(data, "select.def").toPath(), "\ufeff[Characters]\nKFM/KFM.def\n".getBytes(StandardCharsets.UTF_8));
         assertEquals(Boolean.TRUE, LibraryScanner.scan(root).characters.get(0).enabled);
+    }
+
+    @Test public void scannerReadsJapaneseShiftJisMetadata() throws Exception {
+        File file = temporary.newFile("japanese.def");
+        String metadata = "[Info]\nname=日本語\nauthor=作成者\n";
+        Files.write(file.toPath(), metadata.getBytes(java.nio.charset.Charset.forName("Shift_JIS")));
+        assertEquals(metadata, LibraryScanner.readText(file));
     }
 
     @Test public void controllerDeadZoneAndDominantAxis() {
