@@ -23,8 +23,15 @@ public final class LibraryScanner {
         public final String author;
         public final String file;
         public final Boolean enabled;
+        public final String previewFile;
+        public final int previewGroup, previewImage;
         Item(String kind, String reference, String name, String author, String file, Boolean enabled) {
+            this(kind, reference, name, author, file, enabled, null, 0, 0);
+        }
+        Item(String kind, String reference, String name, String author, String file, Boolean enabled,
+             String previewFile, int previewGroup, int previewImage) {
             this.kind = kind; this.reference = reference; this.name = name; this.author = author; this.file = file; this.enabled = enabled;
+            this.previewFile = previewFile; this.previewGroup = previewGroup; this.previewImage = previewImage;
         }
     }
 
@@ -76,6 +83,45 @@ public final class LibraryScanner {
         return new File(folder, name);
     }
 
+    private static String artwork(File root, File defFile, String declared) throws IOException {
+        if (declared != null) {
+            String path = declared.trim().replace('\\', '/').replace("\"", "");
+            if (!path.isEmpty() && !path.startsWith("/") && !path.matches("(?i)^[a-z]:.*")) {
+                boolean safe = true;
+                for (String segment : path.split("/")) if (segment.equals("..") || segment.equals(".")) safe = false;
+                if (safe) {
+                    for (File base : new File[] {defFile.getParentFile(), root}) {
+                        File resolved = base;
+                        for (String segment : path.split("/")) resolved = childIgnoreCase(resolved, segment);
+                        if (resolved.isFile() && resolved.getCanonicalPath().startsWith(root.getCanonicalPath() + File.separator))
+                            return resolved.getAbsolutePath();
+                    }
+                }
+            }
+        }
+        String baseName = defFile.getName().replaceFirst("(?i)\\.def$", "");
+        for (String fallback : new String[] {baseName + ".sff", "portrait.png", "preview.png"}) {
+            File file = childIgnoreCase(defFile.getParentFile(), fallback);
+            if (file.isFile()) return file.getAbsolutePath();
+        }
+        return null;
+    }
+
+    private static int[] stageSprite(Map<String, Map<String, String>> def) {
+        for (Map.Entry<String, Map<String, String>> section : def.entrySet()) {
+            if (!section.getKey().startsWith("bg") || section.getKey().equals("bgdef")) continue;
+            String value = section.getValue().get("spriteno");
+            if (value == null) continue;
+            String[] parts = value.split(",");
+            if (parts.length < 2) continue;
+            try {
+                int group = Integer.parseInt(parts[0].trim()), image = Integer.parseInt(parts[1].trim());
+                if (group >= 0 && group <= 65535 && image >= 0 && image <= 65535) return new int[] {group, image};
+            } catch (NumberFormatException ignored) { }
+        }
+        return new int[] {0, 0};
+    }
+
     public static Catalog scan(File root) throws IOException {
         File chars = childIgnoreCase(root, "chars");
         File stages = childIgnoreCase(root, "stages");
@@ -95,21 +141,26 @@ public final class LibraryScanner {
             Map<String, Map<String, String>> def = DefParser.parse(readText(chosen));
             String ref = character.getName() + "/" + chosen.getName();
             String name = DefParser.value(def, "info", "displayname", DefParser.value(def, "info", "name", character.getName()));
-            result.characters.add(new Item("characters", ref, name, DefParser.value(def, "info", "author", "Unknown"), chosen.getAbsolutePath(), roster.isEnabled("characters", ref)));
+            String sprite = DefParser.value(def, "files", "sprite", DefParser.value(def, "files", "spr", null));
+            result.characters.add(new Item("characters", ref, name, DefParser.value(def, "info", "author", "Unknown"), chosen.getAbsolutePath(), roster.isEnabled("characters", ref),
+                    artwork(root, chosen, sprite), 9000, 1));
         }
-        scanStages(stages, stages, roster, result.stages, 0);
+        scanStages(root, stages, stages, roster, result.stages, 0);
         return result;
     }
 
-    private static void scanStages(File root, File folder, SelectDefEditor roster, List<Item> items, int depth) throws IOException {
+    private static void scanStages(File libraryRoot, File root, File folder, SelectDefEditor roster, List<Item> items, int depth) throws IOException {
         if (depth > ImportLimits.MAX_DEPTH) return;
         for (File file : sorted(folder)) {
-            if (file.isDirectory()) { scanStages(root, file, roster, items, depth + 1); continue; }
+            if (file.isDirectory()) { scanStages(libraryRoot, root, file, roster, items, depth + 1); continue; }
             if (!file.isFile() || !file.getName().toLowerCase(Locale.ROOT).endsWith(".def")) continue;
             String ref = "stages/" + root.toPath().relativize(file.toPath()).toString().replace(File.separatorChar, '/');
             Map<String, Map<String, String>> def = DefParser.parse(readText(file));
             String name = DefParser.value(def, "info", "name", file.getName().substring(0, file.getName().length() - 4));
-            items.add(new Item("extrastages", ref, name, DefParser.value(def, "info", "author", "Unknown"), file.getAbsolutePath(), roster.isEnabled("extrastages", ref)));
+            int[] sprite = stageSprite(def);
+            String spritePath = DefParser.value(def, "bgdef", "spr", DefParser.value(def, "files", "spr", null));
+            items.add(new Item("extrastages", ref, name, DefParser.value(def, "info", "author", "Unknown"), file.getAbsolutePath(), roster.isEnabled("extrastages", ref),
+                    artwork(libraryRoot, file, spritePath), sprite[0], sprite[1]));
         }
     }
 }

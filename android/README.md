@@ -1,6 +1,6 @@
 # IKEMEN Lab for Android (library preview)
 
-This Android app manages a copied IKEMEN/MUGEN library. It does not include or launch IKEMEN GO. It is intended for landscape handheld use with touch or a built-in controller; Android may show it in another orientation or window size on large displays.
+This Android app manages a copied IKEMEN/MUGEN library. It does not include or launch IKEMEN GO. It is intended for landscape handheld use with touch or a built-in controller; Android may show it in another orientation or window size on large displays. Its stable package ID is `com.chillednems.ikemenlab`; the first 0.1.0 prerelease uses version code 2. Updates require a higher version code and the same signing certificate.
 
 ## Build
 
@@ -15,11 +15,11 @@ The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. This is a locally 
 ## Use
 
 1. Choose **Import folder** and select the root of an unpacked IKEMEN library with `chars/` and `stages/`. The app copies that tree into its private storage. It never edits the picked source folder. Case differences in the root folder names and `.def` extension are accepted.
-2. Search characters and stages, select an entry, and enable or disable it in the roster. An item absent from `select.def` is shown as **Unlisted**; enabling it adds a relative reference. Each edit backs up the previous `data/select.def` inside the managed copy.
+2. Search characters and stages, select an entry, view its metadata and available sprite artwork, and enable or disable it in the roster. An item absent from `select.def` is shown as **Unlisted**; enabling it adds a relative reference. Each edit backs up the previous `data/select.def` inside the managed copy.
 3. Choose **Export select.def** to write the edited roster to a user-selected location. Copy that exported file into your actual IKEMEN installation yourself, after checking it against that installation's content.
 
 Use touch, D-pad, or left stick to move between controls. A selects the focused control; B goes back. A yellow outline shows controller focus. The page scrolls on short landscape screens and adapts to wider or narrower windows.
 
-Import is limited to 20,000 entries, 8 GB of copied bytes, and 20 folder levels; failed imports remove their staging directory. It accepts folders, not archive files. Current browsing uses text metadata from character and stage `.def` files; it does not show SFF portraits. It does not install a browser extension, import RAR/7z/ZIP, manage screenpacks, edit the original picked folder, or launch a game. The app currently retains managed copies when a different folder is imported; Android app removal deletes them. Exported `select.def` must be paired with the appropriate content in the target IKEMEN library.
+Import is limited to 20,000 entries, 8 GB of copied bytes, and 20 folder levels; failed imports remove their staging directory. It accepts folders, not archive files. Browsing uses `.def` metadata and shows a real character portrait or stage artwork sprite when it can decode SFF v1 8-bit PCX with a palette, SFF v2 embedded PNG formats 11/12, or a direct PNG. Stage artwork uses the first `[BG ...] spriteno` reference when present, then group 9000 or 0,0; it is one sprite, not a composited stage scene. SFF v2 RLE5/RLE8/LZ5, linked sprites, missing palettes, and oversized or malformed images report an unavailable preview. Preview SFF files are limited to 64 MB and decoded images to 4 million pixels. It does not install a browser extension, import RAR/7z/ZIP, manage screenpacks, edit the original picked folder, or launch a game. The app currently retains managed copies when a different folder is imported; Android app removal deletes them. Exported `select.def` must be paired with the appropriate content in the target IKEMEN library.
 
-Unit tests cover DEF parsing, case-insensitive folder discovery, nested stages, select.def preservation and backups, import bounds, and stick direction policy. Emulator/physical-controller behavior still needs device QA, including on AYN Odin 3.
+Unit tests cover DEF parsing, case-insensitive folder discovery, nested stages and stage sprite references, SFF preview extraction/failure cases, select.def preservation and backups, import bounds, and stick direction policy. Emulator/physical-controller behavior still needs device QA, including on AYN Odin 3.

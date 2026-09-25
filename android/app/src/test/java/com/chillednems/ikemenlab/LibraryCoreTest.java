@@ -64,8 +64,10 @@ public final class LibraryCoreTest {
         File stage = new File(root, "stages/deep");
         File data = new File(root, "DATA");
         assertTrue(character.mkdirs()); assertTrue(stage.mkdirs()); assertTrue(data.mkdirs());
-        Files.write(new File(character, "KFM.Def").toPath(), "[Info]\nname = Kung Fu Man\nauthor = Elecbyte\n".getBytes(StandardCharsets.UTF_8));
-        Files.write(new File(stage, "dojo.def").toPath(), "[Info]\nname = Dojo\n".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(character, "KFM.Def").toPath(), "[Info]\nname = Kung Fu Man\nauthor = Elecbyte\n[Files]\nsprite = KFM.sff\n".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(character, "KFM.sff").toPath(), new byte[] {1});
+        Files.write(new File(stage, "dojo.def").toPath(), "[Info]\nname = Dojo\n[BGdef]\nspr = dojo.sff\n[BG 0]\nspriteno = 20,3\n".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(stage, "dojo.sff").toPath(), new byte[] {1});
         String initial = "[Characters]\r\nKFM/KFM.Def\r\n[ExtraStages]\r\nstages/deep/dojo.def\r\n[Options]\r\nopaque=1\r\n";
         File select = new File(data, "SELECT.DEF");
         Files.write(select.toPath(), initial.getBytes(StandardCharsets.UTF_8));
@@ -75,6 +77,10 @@ public final class LibraryCoreTest {
         assertEquals("Kung Fu Man", catalog.characters.get(0).name);
         assertEquals(Boolean.TRUE, catalog.characters.get(0).enabled);
         assertEquals(Boolean.TRUE, catalog.stages.get(0).enabled);
+        assertTrue(catalog.characters.get(0).previewFile.endsWith("KFM.sff"));
+        assertTrue(catalog.stages.get(0).previewFile.endsWith("dojo.sff"));
+        assertEquals(20, catalog.stages.get(0).previewGroup);
+        assertEquals(3, catalog.stages.get(0).previewImage);
         RosterStore.setEnabled(root, catalog.characters.get(0), false);
         assertTrue(new String(Files.readAllBytes(select.toPath()), StandardCharsets.UTF_8).contains(";KFM/KFM.Def"));
         assertTrue(new String(Files.readAllBytes(select.toPath()), StandardCharsets.UTF_8).contains("opaque=1\r\n"));

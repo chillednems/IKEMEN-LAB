@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -18,6 +20,7 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -50,6 +53,10 @@ public final class MainActivity extends Activity {
     private String searchText = "";
     private boolean busy;
     private long lastStickMove;
+    private String previewKey;
+    private Bitmap previewBitmap;
+    private String previewReason;
+    private boolean previewLoading;
     private android.window.OnBackInvokedCallback backCallback;
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener libraryChanged = (prefs, key) -> {
         if (!KEY_PATH.equals(key)) return;
@@ -211,7 +218,8 @@ public final class MainActivity extends Activity {
         }
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("text/plain");
+        // text/plain causes some document providers to append .txt to select.def.
+        intent.setType("application/octet-stream");
         intent.putExtra(Intent.EXTRA_TITLE, "select.def");
         startActivityForResult(intent, EXPORT_SELECT);
     }
@@ -308,7 +316,62 @@ public final class MainActivity extends Activity {
         detail.addView(label("Reference: " + selected.reference, 14, false));
         detail.addView(label("DEF: " + selected.file, 13, false));
         detail.addView(label("Roster: " + (selected.enabled == null ? "Not listed" : selected.enabled ? "Enabled" : "Disabled"), 16, false));
+        detail.addView(label(selected.kind.equals("characters") ? "Character portrait" : "Stage artwork sprite", 16, true));
+        String key = selected.kind + "|" + selected.reference + "|" + selected.previewFile;
+        if (!key.equals(previewKey)) {
+            previewKey = key; previewBitmap = null; previewReason = null; previewLoading = false;
+        }
+        if (previewBitmap != null) {
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(previewBitmap);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setContentDescription(selected.name + " artwork preview");
+            detail.addView(image, new LinearLayout.LayoutParams(-1, dp(210)));
+        } else {
+            detail.addView(label(previewReason == null ? "Loading artwork preview…" : "Preview unavailable: " + previewReason, 14, false));
+            if (!previewLoading && previewReason == null) loadPreview(selected, key);
+        }
         detail.addView(button(selected.enabled != null && selected.enabled ? "Disable in roster" : "Enable in roster", () -> toggleSelected(selected.enabled == null || !selected.enabled)));
+    }
+
+    private void loadPreview(LibraryScanner.Item item, String key) {
+        previewLoading = true;
+        IO.execute(() -> {
+            Bitmap image = null;
+            String reason = null;
+            try {
+                if (item.previewFile == null) reason = "No artwork file declared or found";
+                else {
+                    File file = new File(item.previewFile);
+                    if (file.getName().toLowerCase(Locale.ROOT).endsWith(".png")) {
+                        if (file.length() <= 64 * 1024 * 1024) image = decodeBoundedPng(Files.readAllBytes(file.toPath()));
+                        if (image == null) reason = "PNG is malformed or exceeds preview limit";
+                    } else {
+                        SffPreview.Result preview = SffPreview.extract(file, item.kind.equals("characters"), item.previewGroup, item.previewImage);
+                        if (!preview.available()) reason = preview.unavailable;
+                        else if (preview.argb != null) image = Bitmap.createBitmap(preview.argb, preview.width, preview.height, Bitmap.Config.ARGB_8888);
+                        else image = decodeBoundedPng(preview.png);
+                        if (reason == null && image == null) reason = "PNG sprite is malformed or exceeds preview limit";
+                    }
+                }
+            } catch (Exception error) { reason = "Could not decode artwork"; }
+            Bitmap result = image;
+            String message = reason;
+            runOnUiThread(() -> {
+                if (isDestroyed() || !key.equals(previewKey)) return;
+                previewBitmap = result; previewReason = message; previewLoading = false;
+                renderDetail();
+            });
+        });
+    }
+
+    private static Bitmap decodeBoundedPng(byte[] bytes) {
+        if (bytes == null || bytes.length > 64 * 1024 * 1024) return null;
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || (long) bounds.outWidth * bounds.outHeight > 4_000_000) return null;
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
     }
 
     private void toggleSelected(boolean enabled) {
