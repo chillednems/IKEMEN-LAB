@@ -70,6 +70,19 @@ public final class LibraryCoreTest {
         editor.setEnabledExact("characters", "Missing (Hero)/Missing (Hero).def", true);
         assertEquals(examples + ";sample/sample.def\r\nMissing (Hero)/Missing (Hero).def\r\n", editor.content());
     }
+    @Test public void documentationWordsInRealDisabledReferencesRemainEditable() {
+        String original = "[Characters]\n;Example Hero/Example Hero.def\n"
+                + ";Format Hero/Format Hero.def\n"
+                + ";Hero/Hero.def, stages/Example Arena.def\n";
+        SelectDefEditor editor = new SelectDefEditor(original);
+        assertEquals(Boolean.FALSE, editor.isEnabled("characters", "Example Hero/Example Hero.def"));
+        assertEquals(Boolean.FALSE, editor.isEnabled("characters", "Format Hero/Format Hero.def"));
+        assertEquals(Boolean.FALSE, editor.isEnabled("characters", "Hero/Hero.def"));
+        editor.setEnabledExact("characters", "Format Hero/Format Hero.def", true);
+        assertEquals("[Characters]\n;Example Hero/Example Hero.def\n"
+                + "Format Hero/Format Hero.def\n"
+                + ";Hero/Hero.def, stages/Example Arena.def\n", editor.content());
+    }
 
     @Test public void loneCrRosterIsEditedWithoutDuplicateSection() {
         String original = "[Characters]\rKFM/KFM.def\r[Options]\rkeep=1\r";

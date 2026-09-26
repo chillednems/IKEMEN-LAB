@@ -39,14 +39,13 @@ final class RosterLineClassifier {
         }
         if (!active) {
             if (INSERT.matcher(line).find()) { exampleBlock = false; return null; }
-            if ((line.indexOf(' ') >= 0 || line.indexOf(':') >= 0) && EXAMPLE.matcher(line).find()) {
-                exampleBlock = true; return null;
-            }
             if (exampleBlock) return null;
         }
         String raw = line.split("[,;]", 2)[0].trim().replace('\\', '/');
-        if (!looksLikeReference(raw, active)) return null;
-        return new Candidate(section, raw, active);
+        if (looksLikeReference(raw, active)) return new Candidate(section, raw, active);
+        // A keyword in a later stage/option or in a real name does not start a documentation block.
+        if (!active && EXAMPLE.matcher(line).find()) exampleBlock = true;
+        return null;
     }
 
     private static boolean looksLikeReference(String reference, boolean active) {

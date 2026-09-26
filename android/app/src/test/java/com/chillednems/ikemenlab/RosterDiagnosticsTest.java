@@ -72,4 +72,18 @@ public final class RosterDiagnosticsTest {
         assertFalse(entries.get(2).active);
         assertEquals(3, RosterDiagnostics.scan(root, roster.getBytes(StandardCharsets.UTF_8)).size());
     }
+    @Test public void referenceNamesAndOptionStagesContainingDocumentationWordsAreRealRows() throws Exception {
+        File root = folder.newFolder();
+        assertTrue(new File(root, "chars").mkdir());
+        String roster = "[Characters]\n"
+                + ";Example Hero/Example Hero.def\n"
+                + ";Format Hero/Format Hero.def\n"
+                + ";Hero/Hero.def, stages/Example Arena.def\n";
+        List<RosterDiagnostics.Entry> entries = RosterDiagnostics.entries(root, roster.getBytes(StandardCharsets.UTF_8));
+        assertEquals(3, entries.size());
+        assertEquals("Example Hero/Example Hero.def", entries.get(0).rawReference);
+        assertEquals("Format Hero/Format Hero.def", entries.get(1).rawReference);
+        assertEquals("Hero/Hero.def", entries.get(2).rawReference);
+        assertEquals(3, RosterDiagnostics.scan(root, roster.getBytes(StandardCharsets.UTF_8)).size());
+    }
 }
