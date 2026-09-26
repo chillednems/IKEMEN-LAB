@@ -40,14 +40,14 @@ A supported 2D stage shows a static composition of two background layers.
 
 These actual-app captures use a self-created demonstration library. They were captured from signed candidate `c0b38d9`; the later recovery-only correction does not change these screens. Version 0.6.0 has not been published.
 
-![Visible Export action and no-change review in landscape](android-v0.6.0-landscape-export.png)
+![Library browser with visible Export action in landscape](android-v0.6.0-landscape-export.png)
 
-The main screen keeps **Export** visible, and the review explains the linked destination, change counts, and backup plan.
+The main library browser keeps **Export** visible beside Roster actions and Settings.
 
 ![Settings with current source and backup location](android-v0.6.0-settings.png)
 
 Settings shows the selected source, preview mode, orientation, backup destination, retention, and no-change warning.
 
-![Selected character preview](android-v0.6.0-selected-preview.png)
+![Character preview setting with a selected choice](android-v0.6.0-selected-preview.png)
 
-Character artwork remains below the name, author, and reference while the direct source folder is linked.
+The preview setting marks **Neutral over portrait** as the current choice with a checkmark and text.
