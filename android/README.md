@@ -8,6 +8,8 @@ The current Android prerelease is [0.5.0](https://github.com/chillednems/IKEMEN-
 
 These are Android development checkpoints from `codex/android-library`; `main` has not received the Android app. [Screenshots](screenshots/README.md) show public-safe sample artwork and the visible changes. The [roadmap](ROADMAP.md) distinguishes planned work from released features.
 
+The unreleased [direct source access checkpoint](DIRECT-SOURCE-DEVELOPMENT.md) changes how the development branch reads character and stage files. The instructions below describe the published 0.5.0 APK.
+
 ## Import and browse
 
 1. Choose **Switch folder** and pick the library root containing `chars/` and `stages/`. Allow read and write access if Android offers it. **In 0.5.0 and earlier, the app copies the entire folder into its private storage.** This may use substantial extra space for large character and stage collections. The app remembers that copy between launches; the picked source is unchanged during import. Directly referencing the selected source without copying `chars/` and `stages/` is planned for the next storage update.

@@ -78,6 +78,22 @@ public final class SelectStorageTest {
                 if (!ids.get(i).equals(protectedVersionId)) versions.remove(ids.get(i));
         }
     }
+    @Test public void exportDiagnosticsUseLinkedSourceInsteadOfSmallWorkingDirectory() throws Exception {
+        File working = folder.newFolder("working-only");
+        File data = new File(working, "data");
+        assertTrue(data.mkdir());
+        String roster = "[Characters]\nKFM/KFM.def\n";
+        Files.write(new File(data, "select.def").toPath(), bytes(roster));
+        File source = folder.newFolder("source-with-content");
+        File chars = new File(source, "chars"), stages = new File(source, "stages");
+        assertTrue(chars.mkdir()); assertTrue(stages.mkdir());
+        File fighter = new File(chars, "KFM");
+        assertTrue(fighter.mkdir());
+        Files.write(new File(fighter, "KFM.def").toPath(), bytes("[Info]\nname=KFM\n"));
+        SelectStorage store = new SelectStorage(working, LibraryFiles.local(source));
+        SelectStorage.ExportPlan plan = store.planExport(new Fake("[Characters]\n"), store.readWorking().sha256);
+        assertTrue("Linked content exists although private working root has no chars directory", plan.missingWarnings.isEmpty());
+    }
     @Test public void noOpDoesNotCreateVersionAndFiniteRetentionPrunesOnlyManaged() throws Exception {
         SelectStorage store = storage("one");
         String hash = store.readWorking().sha256;

@@ -70,6 +70,9 @@ final class LibraryFiles {
         if (folder == null || !folder.directory()) return Collections.emptyList();
         List<Node> result = new ArrayList<>(folder.children());
         result.sort(Comparator.comparing(Node::name, String.CASE_INSENSITIVE_ORDER));
+        for (int i = 1; i < result.size(); i++)
+            if (result.get(i - 1).name().equalsIgnoreCase(result.get(i).name()))
+                throw new IOException("Ambiguous case-insensitive name: " + result.get(i).name());
         return result;
     }
 
