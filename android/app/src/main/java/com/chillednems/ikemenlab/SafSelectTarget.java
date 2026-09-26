@@ -11,8 +11,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Properties;
 
 /** Existing select.def in a persisted SAF tree. Generic providers offer no atomic replace. */
 public final class SafSelectTarget implements SelectStorage.External {
@@ -57,17 +59,14 @@ public final class SafSelectTarget implements SelectStorage.External {
     }
     @Override public String backup(byte[] preimage, String transactionId) throws IOException {
         requireGrant(resolver, tree, true);
-        Uri folder = exactChild(data, "select-backups", true);
-        if (folder == null) {
-            try { folder = DocumentsContract.createDocument(resolver, data, MIME_DIR, "select-backups"); }
-            catch (Exception failure) { throw new IOException("Could not create source backup directory", failure); }
-        }
+        Uri folder = backupFolder(true);
         if (folder == null) throw new IOException("Could not create source backup directory");
         String name = "select.def.backup." + transactionId + ".bak";
         Uri backup;
         try { backup = DocumentsContract.createDocument(resolver, folder, "application/octet-stream", name); }
         catch (Exception failure) { throw new IOException("Could not create source preimage backup", failure); }
         if (backup == null) throw new IOException("Could not create source preimage backup");
+        Uri manifest = null;
         try {
             try (OutputStream output = resolver.openOutputStream(backup, "rwt")) {
                 if (output == null) throw new IOException("Could not write source preimage backup");
@@ -75,12 +74,99 @@ public final class SafSelectTarget implements SelectStorage.External {
             }
             if (!java.security.MessageDigest.isEqual(readDocument(backup), preimage))
                 throw new IOException("Source backup readback failed");
+            Properties metadata = new Properties();
+            metadata.setProperty("sha256", SelectStorage.hash(preimage));
+            metadata.setProperty("bytes", Integer.toString(preimage.length));
+            long createdAt = System.currentTimeMillis();
+            for (SelectStorage.Version existing : listBackups())
+                createdAt = Math.max(createdAt, existing.createdAt + 1);
+            metadata.setProperty("createdAt", Long.toString(createdAt));
+            metadata.setProperty("reason", "source replacement");
+            metadata.setProperty("origin", "source");
+            ByteArrayOutputStream serialized = new ByteArrayOutputStream();
+            metadata.store(serialized, "managed select.def source backup");
+            manifest = DocumentsContract.createDocument(resolver, folder, "text/plain",
+                    "select.def.backup." + transactionId + ".properties");
+            if (manifest == null) throw new IOException("Could not create source backup metadata");
+            try (OutputStream output = resolver.openOutputStream(manifest, "rwt")) {
+                if (output == null) throw new IOException("Could not write source backup metadata");
+                output.write(serialized.toByteArray()); output.flush();
+            }
+            if (!java.security.MessageDigest.isEqual(readDocument(manifest), serialized.toByteArray()))
+                throw new IOException("Source backup metadata readback failed");
         } catch (IOException | RuntimeException failure) {
+            if (manifest != null) try { DocumentsContract.deleteDocument(resolver, manifest); } catch (Exception ignored) { }
             try { DocumentsContract.deleteDocument(resolver, backup); } catch (Exception ignored) { }
             if (failure instanceof IOException) throw (IOException) failure;
             throw new IOException("Source backup write denied", failure);
         }
         return backup.toString();
+    }
+    @Override public List<SelectStorage.Version> listBackups() throws IOException {
+        requireGrant(resolver, tree, false);
+        Uri folder = backupFolder(false);
+        List<SelectStorage.Version> result = new ArrayList<>();
+        if (folder == null) return result;
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getDocumentId(folder));
+        String[] projection = { DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME };
+        try (Cursor cursor = resolver.query(children, projection, null, null, null)) {
+            if (cursor == null) throw new IOException("Folder provider did not return backups");
+            while (cursor.moveToNext()) {
+                String name = cursor.getString(1);
+                if (name == null || !name.matches("select\\.def\\.backup\\.[0-9a-fA-F-]{36}\\.properties")) continue;
+                String id = name.substring("select.def.backup.".length(), name.length() - ".properties".length());
+                Uri body = exactChild(folder, "select.def.backup." + id + ".bak", false);
+                if (body == null) continue;
+                Uri manifest = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
+                Properties p = new Properties();
+                try {
+                    p.load(new java.io.ByteArrayInputStream(readDocument(manifest)));
+                    byte[] bytes = readDocument(body);
+                    if (!SelectStorage.hash(bytes).equals(p.getProperty("sha256"))
+                            || !Integer.toString(bytes.length).equals(p.getProperty("bytes"))) continue;
+                    result.add(new SelectStorage.Version(id, p, bytes.length));
+                } catch (IOException | NumberFormatException ignored) { } // Unverified files remain untouched.
+            }
+        } catch (SecurityException failure) { throw new IOException("Source backup access denied", failure); }
+        result.sort(Comparator.comparingLong((SelectStorage.Version v) -> v.createdAt).reversed());
+        return result;
+    }
+    @Override public byte[] readBackup(String id) throws IOException {
+        if (id == null || !id.matches("[0-9a-fA-F-]{36}")) throw new IOException("Invalid source backup ID");
+        Uri folder = backupFolder(false);
+        if (folder == null) throw new IOException("Source backup folder missing");
+        for (SelectStorage.Version version : listBackups()) if (version.id.equals(id)) {
+            Uri body = exactChild(folder, "select.def.backup." + id + ".bak", false);
+            byte[] selected = readDocument(body);
+            if (!SelectStorage.hash(selected).equals(version.sha256)) throw new IOException("Source backup changed");
+            return selected;
+        }
+        throw new IOException("Source backup missing or failed verification");
+    }
+    @Override public void pruneBackups(Integer retention, String protectedVersionId) throws IOException {
+        if (retention == null) return;
+        if (retention < 1) throw new IOException("Retention must be positive");
+        requireGrant(resolver, tree, true);
+        Uri folder = backupFolder(false);
+        if (folder == null) return;
+        List<SelectStorage.Version> all = listBackups();
+        for (int i = retention; i < all.size(); i++) {
+            String id = all.get(i).id;
+            if (id.equals(protectedVersionId)) continue;
+            Uri metadata = exactChild(folder, "select.def.backup." + id + ".properties", false);
+            Uri body = exactChild(folder, "select.def.backup." + id + ".bak", false);
+            if (metadata == null || body == null) continue;
+            if (!DocumentsContract.deleteDocument(resolver, metadata)) throw new IOException("Could not prune source backup metadata");
+            if (!DocumentsContract.deleteDocument(resolver, body)) throw new IOException("Could not prune source backup bytes");
+        }
+    }
+    private Uri backupFolder(boolean create) throws IOException {
+        Uri folder = exactChild(data, "select-backups", true);
+        if (folder == null && create) {
+            try { folder = DocumentsContract.createDocument(resolver, data, MIME_DIR, "select-backups"); }
+            catch (Exception failure) { throw new IOException("Could not create source backup directory", failure); }
+        }
+        return folder;
     }
 
     private byte[] readDocument(Uri document) throws IOException {

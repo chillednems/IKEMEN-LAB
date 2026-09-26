@@ -9,6 +9,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.Properties;
 
 import static org.junit.Assert.*;
 
@@ -24,6 +29,7 @@ public final class SelectStorageTest {
     }
     private static final class Fake implements SelectStorage.External {
         byte[] contents, backup;
+        final Map<String, byte[]> versions = new LinkedHashMap<>();
         int writes, backupCalls;
         boolean partialFailure, rollbackFailure, badReadback, outsideEdit, changeAfterBackup, backupFailure;
         Fake(String value) { contents = bytes(value); }
@@ -44,9 +50,32 @@ public final class SelectStorageTest {
         }
         @Override public String backup(byte[] value, String id) throws IOException {
             if (backupFailure) throw new IOException("backup close failed");
-            backupCalls++; backup = value.clone();
+            backupCalls++; backup = value.clone(); versions.put(id, value.clone());
             if (changeAfterBackup) outsideEdit = true;
             return "fake://data/select-backups/" + id;
+        }
+        @Override public List<SelectStorage.Version> listBackups() {
+            List<SelectStorage.Version> result = new ArrayList<>();
+            long time = 1;
+            for (Map.Entry<String, byte[]> entry : versions.entrySet()) {
+                Properties p = new Properties();
+                p.setProperty("sha256", SelectStorage.hash(entry.getValue()));
+                p.setProperty("createdAt", Long.toString(time++));
+                p.setProperty("reason", "source export"); p.setProperty("origin", "source");
+                result.add(new SelectStorage.Version(entry.getKey(), p, entry.getValue().length));
+            }
+            return result;
+        }
+        @Override public byte[] readBackup(String id) throws IOException {
+            byte[] value = versions.get(id);
+            if (value == null) throw new IOException("missing source backup");
+            return value.clone();
+        }
+        @Override public void pruneBackups(Integer retention, String protectedVersionId) {
+            if (retention == null) return;
+            List<String> ids = new ArrayList<>(versions.keySet());
+            for (int i = 0; i < ids.size() - retention; i++)
+                if (!ids.get(i).equals(protectedVersionId)) versions.remove(ids.get(i));
         }
     }
     @Test public void noOpDoesNotCreateVersionAndFiniteRetentionPrunesOnlyManaged() throws Exception {
@@ -74,6 +103,15 @@ public final class SelectStorageTest {
         assertArrayEquals(first, store.readVersion(versionId));
         assertEquals(3, store.listVersions().size());
     }
+    @Test public void finiteRetentionDoesNotConsumeSelectedRestoreVersionOrCurrentPreimage() throws Exception {
+        SelectStorage store = storage("first");
+        String selected = store.commitWorking(store.readWorking().sha256, bytes("second"), "edit", null).previousVersion.id;
+        store.commitWorking(store.readWorking().sha256, bytes("third"), "edit", null);
+        store.restoreLoadOnly(selected, store.readWorking().sha256, 1);
+        assertArrayEquals(bytes("first"), store.readVersion(selected));
+        assertEquals("first", new String(store.readWorking().bytes, StandardCharsets.UTF_8));
+        assertTrue(store.listVersions().size() >= 2);
+    }
     @Test public void migratesLegacyWithoutDeletingOriginal() throws Exception {
         SelectStorage store = storage("now");
         File legacy = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(), "select.def.backup.old.bak");
@@ -93,6 +131,16 @@ public final class SelectStorageTest {
         try { store.executeExport(target, plan); fail(); } catch (IOException expected) { }
         assertEquals(0, target.writes);
         assertArrayEquals(bytes("outside"), target.contents);
+    }
+    @Test public void normalExportPlanRejectsWorkingChangeEvenWhenOldHashIsBackedUp() throws Exception {
+        SelectStorage store = storage("working");
+        Fake target = new Fake("source");
+        SelectStorage.ExportPlan plan = store.planExport(target, store.readWorking().sha256);
+        store.commitWorking(store.readWorking().sha256, bytes("new working"), "edit", null);
+        assertEquals(plan.workingHash, store.listVersions().get(0).sha256);
+        try { store.executeExport(target, plan); fail(); } catch (IOException expected) { }
+        assertEquals(0, target.backupCalls);
+        assertEquals(0, target.writes);
     }
     @Test public void externalEditAfterBackupNeverRollsBackOutsideEdit() throws Exception {
         SelectStorage store = storage("working");
@@ -151,6 +199,41 @@ public final class SelectStorageTest {
         assertArrayEquals(bytes("chosen"), store.readWorking().bytes);
         assertArrayEquals(bytes("chosen"), store.readVersion(selected));
         assertEquals("NONE", store.inspectPendingRestore(target));
+    }
+    @Test public void sourceVersionsCanLoadLocallyAndFiniteRetentionPrunesAfterVerifiedExport() throws Exception {
+        SelectStorage store = storage("working-one");
+        Fake target = new Fake("source-old");
+        SelectStorage.ExportPlan first = store.planExport(target, store.readWorking().sha256);
+        store.executeExport(target, first, 1);
+        assertEquals(1, target.versions.size());
+        SelectStorage.BackupRef source = null;
+        for (SelectStorage.BackupRef ref : store.listAllBackups(target))
+            if (ref.origin == SelectStorage.BackupRef.Origin.SOURCE) source = ref;
+        assertNotNull(source);
+        store.restoreLoadOnly(target, source, store.readWorking().sha256, null);
+        assertArrayEquals(bytes("source-old"), store.readWorking().bytes);
+        assertArrayEquals(bytes("source-old"), target.readBackup(source.id));
+        store.commitWorking(store.readWorking().sha256, bytes("working-two"), "edit", null);
+        target.contents = bytes("source-new");
+        SelectStorage.ExportPlan second = store.planExport(target, store.readWorking().sha256);
+        store.executeExport(target, second, 1);
+        assertEquals(1, target.versions.size());
+    }
+    @Test public void sourceBackupRestoreProtectsSelectionAndCurrentPreimage() throws Exception {
+        SelectStorage store = storage("working");
+        Fake target = new Fake("source-old");
+        store.executeExport(target, store.planExport(target, store.readWorking().sha256), null);
+        SelectStorage.BackupRef selected = null;
+        for (SelectStorage.BackupRef ref : store.listAllBackups(target))
+            if (ref.origin == SelectStorage.BackupRef.Origin.SOURCE) selected = ref;
+        assertNotNull(selected);
+        target.contents = bytes("source-current");
+        SelectStorage.ExportPlan plan = store.planRestoreSource(target, selected);
+        store.restoreSourceAndWorking(target, selected, store.readWorking().sha256, plan, 1);
+        assertArrayEquals(bytes("source-old"), target.contents);
+        assertArrayEquals(bytes("source-current"), target.backup);
+        assertArrayEquals(bytes("source-old"), target.readBackup(selected.id));
+        assertEquals(2, target.versions.size()); // Chosen version and immediate preimage are protected.
     }
     private static File storeRoot(SelectStorage store) throws Exception {
         java.lang.reflect.Field field = SelectStorage.class.getDeclaredField("root");
