@@ -1,8 +1,9 @@
 package com.chillednems.ikemenlab;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.res.Configuration;
+import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.Bitmap;
@@ -43,6 +44,7 @@ public final class MainActivity extends Activity {
     private static final ExecutorService PREVIEW = Executors.newSingleThreadExecutor();
     private static final String PREFS = "library";
     private static final String KEY_PATH = "active_path";
+    private static final String KEY_ORIENTATION = "orientation";
     private LinearLayout root;
     private LinearLayout list;
     private LinearLayout detail;
@@ -51,6 +53,7 @@ public final class MainActivity extends Activity {
     private File library;
     private LibraryScanner.Catalog catalog;
     private LibraryScanner.Item selected;
+    private String restoreSelection;
     private String searchText = "";
     private boolean busy;
     private long lastStickMove;
@@ -59,29 +62,19 @@ public final class MainActivity extends Activity {
     private String previewReason;
     private boolean previewLoading;
     private android.window.OnBackInvokedCallback backCallback;
-    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener libraryChanged = (prefs, key) -> {
-        if (!KEY_PATH.equals(key)) return;
-        String path = prefs.getString(KEY_PATH, null);
-        if (path != null) {
-            File saved = new File(path);
-            if (saved.isDirectory() && saved.getParentFile().equals(new File(getFilesDir(), "libraries"))) {
-                library = saved;
-                selected = null;
-                refreshCatalog();
-            }
-        }
-    };
-
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        applyOrientation();
         String path = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_PATH, null);
         if (path != null) {
             File saved = new File(path);
             File parent = new File(getFilesDir(), "libraries");
             if (saved.isDirectory() && saved.getParentFile().equals(parent)) library = saved;
         }
-        if (state != null) searchText = state.getString("search", "");
-        getSharedPreferences(PREFS, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(libraryChanged);
+        if (state != null) {
+            searchText = state.getString("search", "");
+            restoreSelection = state.getString("selection");
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             backCallback = this::handleBack;
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
@@ -93,12 +86,12 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy() {
         if (Build.VERSION.SDK_INT >= 33 && backCallback != null)
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
-        getSharedPreferences(PREFS, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(libraryChanged);
         super.onDestroy();
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putString("search", search == null ? searchText : search.getText().toString());
+        if (selected != null) state.putString("selection", selectionKey(selected));
         super.onSaveInstanceState(state);
     }
 
@@ -161,21 +154,16 @@ public final class MainActivity extends Activity {
         });
         setContentView(root);
 
-        ScrollView page = new ScrollView(this);
-        page.setFillViewport(true);
-        root.addView(page, new LinearLayout.LayoutParams(-1, -1));
-        LinearLayout body = column();
-        page.addView(body);
-        body.addView(label("IKEMEN Lab · Android library", 24, true));
-        body.addView(label("Manage characters and stages. Game launch is planned for later.", 14, false));
+        root.addView(label("IKEMEN Lab · Android library", 24, true));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
-        body.addView(actions);
-        actions.addView(button("Import folder", this::pickFolder), new LinearLayout.LayoutParams(0, dp(58), 1));
+        root.addView(actions);
+        actions.addView(button("Switch folder", this::pickFolder), new LinearLayout.LayoutParams(0, dp(58), 1));
         actions.addView(button("Export select.def", this::pickExport), new LinearLayout.LayoutParams(0, dp(58), 1));
+        actions.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(0, dp(58), 1));
         status = label("Choose an IKEMEN folder with chars and stages.", 14, false);
-        body.addView(status);
+        root.addView(status);
 
         search = new EditText(this);
         search.setSingleLine(true);
@@ -185,22 +173,53 @@ public final class MainActivity extends Activity {
         search.setText(searchText);
         search.setPadding(dp(12), dp(8), dp(12), dp(8));
         search.setBackgroundColor(0xff243440);
-        body.addView(search, new LinearLayout.LayoutParams(-1, dp(52)));
+        root.addView(search, new LinearLayout.LayoutParams(-1, dp(52)));
         search.addTextChangedListener(new android.text.TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             public void onTextChanged(CharSequence s, int start, int before, int count) { searchText = s.toString(); renderList(); }
             public void afterTextChanged(android.text.Editable e) {}
         });
 
-        boolean wide = getResources().getConfiguration().screenWidthDp >= 600;
+        boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
         LinearLayout panels = new LinearLayout(this);
-        panels.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        body.addView(panels, new LinearLayout.LayoutParams(-1, -2));
+        panels.setOrientation(landscape ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        root.addView(panels, new LinearLayout.LayoutParams(-1, 0, 1));
         list = column();
         detail = column();
-        panels.addView(list, wide ? new LinearLayout.LayoutParams(0, -2, 1.15f) : new LinearLayout.LayoutParams(-1, -2));
-        panels.addView(detail, wide ? new LinearLayout.LayoutParams(0, -2, 1f) : new LinearLayout.LayoutParams(-1, -2));
+        ScrollView listScroll = new ScrollView(this);
+        ScrollView detailScroll = new ScrollView(this);
+        listScroll.setFillViewport(true);
+        detailScroll.setFillViewport(true);
+        listScroll.addView(list);
+        detailScroll.addView(detail);
+        if (landscape) {
+            panels.addView(listScroll, new LinearLayout.LayoutParams(0, -1, 1.15f));
+            panels.addView(detailScroll, new LinearLayout.LayoutParams(0, -1, 1));
+        } else {
+            panels.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+            panels.addView(detailScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        }
         renderList();
+    }
+
+    private void applyOrientation() {
+        String choice = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_ORIENTATION, "landscape");
+        setRequestedOrientation("portrait".equals(choice)
+                ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+    }
+
+    private void showSettings() {
+        if (busy) return;
+        String current = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_ORIENTATION, "landscape");
+        new AlertDialog.Builder(this).setTitle("Screen orientation")
+                .setSingleChoiceItems(new String[]{"Landscape", "Portrait"}, "portrait".equals(current) ? 1 : 0,
+                        (dialog, which) -> {
+                            String choice = which == 1 ? "portrait" : "landscape";
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_ORIENTATION, choice).apply();
+                            dialog.dismiss();
+                            applyOrientation();
+                        })
+                .setNegativeButton("Cancel", null).show();
     }
 
     private void showStatus(String message) { if (status != null) status.setText(message); }
@@ -269,7 +288,14 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 LibraryScanner.Catalog scanned = LibraryScanner.scan(current);
-                runOnUiThread(() -> { if (!isDestroyed() && current.equals(library)) { catalog = scanned; renderList(); showStatus(summary()); } });
+                runOnUiThread(() -> { if (!isDestroyed() && current.equals(library)) {
+                    catalog = scanned;
+                    if (restoreSelection != null) {
+                        selected = findByKey(scanned, restoreSelection);
+                        restoreSelection = null;
+                    }
+                    renderList(); showStatus(summary());
+                } });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) showStatus("Scan failed: " + error.getMessage()); }); }
         });
     }
@@ -290,11 +316,18 @@ public final class MainActivity extends Activity {
             row.setMinHeight(dp(52));
             row.setFocusable(true);
             row.setClickable(true);
-            row.setTag(item.kind + "|" + item.reference);
+            row.setTag(selectionKey(item));
             row.setOnClickListener(v -> {
+                RowActivation.Action action = RowActivation.decide(
+                        selected == null ? null : selectionKey(selected), selectionKey(item), busy);
+                if (action == RowActivation.Action.IGNORE) return;
+                if (action == RowActivation.Action.TOGGLE) {
+                    toggleSelected(item.enabled == null || !item.enabled);
+                    return;
+                }
                 selected = item;
                 renderList();
-                View replacement = list.findViewWithTag(item.kind + "|" + item.reference);
+                View replacement = list.findViewWithTag(selectionKey(item));
                 if (replacement != null) replacement.requestFocus();
             });
             focusStyle(row, selected != null && selected.reference.equals(item.reference) && selected.kind.equals(item.kind));
@@ -315,8 +348,6 @@ public final class MainActivity extends Activity {
         detail.addView(label(selected.name, 21, true));
         detail.addView(label("Author: " + selected.author, 16, false));
         detail.addView(label("Reference: " + selected.reference, 14, false));
-        detail.addView(label("DEF: " + selected.file, 13, false));
-        detail.addView(label("Roster: " + (selected.enabled == null ? "Not listed" : selected.enabled ? "Enabled" : "Disabled"), 16, false));
         detail.addView(label(selected.kind.equals("characters") ? "Character portrait" : "Stage artwork sprite", 16, true));
         String key = selected.kind + "|" + selected.reference + "|" + selected.previewFile;
         if (!key.equals(previewKey)) {
@@ -332,6 +363,8 @@ public final class MainActivity extends Activity {
             detail.addView(label(previewReason == null ? "Loading artwork preview…" : "Preview unavailable: " + previewReason, 14, false));
             if (!previewLoading && previewReason == null) loadPreview(selected, key);
         }
+        detail.addView(label("DEF: " + selected.file, 13, false));
+        detail.addView(label("Roster: " + (selected.enabled == null ? "Not listed" : selected.enabled ? "Enabled" : "Disabled"), 16, false));
         detail.addView(button(selected.enabled != null && selected.enabled ? "Disable in roster" : "Enable in roster", () -> toggleSelected(selected.enabled == null || !selected.enabled)));
     }
 
@@ -392,6 +425,10 @@ public final class MainActivity extends Activity {
                     selected = find(scanned, item);
                     busy = false;
                     renderList();
+                    if (selected != null) {
+                        View row = list.findViewWithTag(selectionKey(selected));
+                        if (row != null) row.requestFocus();
+                    }
                     showStatus("Roster updated. Export select.def to use it outside this app.");
                 });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) { busy = false; showStatus("Roster update failed: " + error.getMessage()); } }); }
@@ -404,8 +441,19 @@ public final class MainActivity extends Activity {
         return null;
     }
 
+    private static String selectionKey(LibraryScanner.Item item) { return item.kind + "|" + item.reference; }
+
+    private static LibraryScanner.Item findByKey(LibraryScanner.Catalog catalog, String key) {
+        for (LibraryScanner.Item item : catalog.characters) if (selectionKey(item).equals(key)) return item;
+        for (LibraryScanner.Item item : catalog.stages) if (selectionKey(item).equals(key)) return item;
+        return null;
+    }
+
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && (event.getSource() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD) {
+        if ((event.getSource() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+                && (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A || event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B)
+                && (event.getAction() == KeyEvent.ACTION_UP || event.getRepeatCount() > 0)) return true;
+        if (event.getAction() == KeyEvent.ACTION_DOWN && (event.getSource() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD) {
             if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A) {
                 View focused = getCurrentFocus();
                 if (focused != null) focused.performClick();

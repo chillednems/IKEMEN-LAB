@@ -15,6 +15,15 @@ import static org.junit.Assert.*;
 public final class LibraryCoreTest {
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
 
+    @Test public void rowActivationRequiresSelectionBeforeToggleAndIgnoresBusyPresses() {
+        String first = "characters|KFM/KFM.def";
+        String second = "stages|dojo.def";
+        assertEquals(RowActivation.Action.SELECT, RowActivation.decide(null, first, false));
+        assertEquals(RowActivation.Action.TOGGLE, RowActivation.decide(first, first, false));
+        assertEquals(RowActivation.Action.SELECT, RowActivation.decide(first, second, false));
+        assertEquals(RowActivation.Action.IGNORE, RowActivation.decide(first, first, true));
+    }
+
     @Test public void defMetadataKeepsQuotedSemicolonAndSections() {
         Map<String, Map<String, String>> parsed = DefParser.parse("[Info]\r\nname = \"Hero; Alpha\" ; note\r\nauthor = Creator\r\n");
         assertEquals("Hero; Alpha", DefParser.value(parsed, "info", "name", "missing"));
