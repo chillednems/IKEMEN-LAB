@@ -12,7 +12,7 @@ On a short landscape window, **More** contains Switch folder, Roster actions, an
 
 ## Export safely to the source folder
 
-Open **Roster actions → Review export to linked source**. The review shows the exact existing destination, its current and replacement SHA-256 hashes, counts of enabled, disabled, added, and removed references, missing-reference warnings, and the pre-write backup location. **No changes** means the source already matches the private roster.
+Open **Roster actions → Review export to linked source**. The review shows the exact existing destination, counts of enabled, disabled, added, and removed references, missing-reference warnings, and the pre-write backup location. **No changes** means the source already matches the private roster.
 
 Choose **Back up and overwrite** only after checking the review. The app first saves and verifies the exact source preimage in `data/select-backups/`, then updates the existing `data/select.def` and reads it back. If the destination changed after the review, the operation stops and asks for a fresh preview. It does not create a numbered `select.def` or `select.def.txt` in the source. A provider that cannot preserve the exact backup filename or write safely stops the export.
 
@@ -27,7 +27,7 @@ Every changed private roster edit saves a verified private version. A successful
 
 In **Settings → Backups to keep**, leave the field empty for unlimited history (the default), or enter a positive number. Finite retention applies after successful writes and prunes only verified backups managed by this app. Unmanaged files are left alone.
 
-If the source folder's permission is revoked or you upgrade from an older local-only library, choose **Settings → Reconnect source folder** (also available in Roster actions) and pick the original folder again. Your private copy remains available. If an interrupted source operation needs attention, **Roster actions → Recovery** shows the required step; normal edits and exports remain blocked until it is resolved.
+If the source folder's permission is revoked or you upgrade from an older local-only library, choose **Settings → Reconnect source folder** (also available in Roster actions) and pick the original folder again. Reconnect accepts only the previously linked folder; use **Switch folder** to import a different library. Your private copy remains available. If an interrupted source operation needs attention, **Roster actions → Recovery** shows the required step; normal edits and exports remain blocked until it is resolved. If a restore is irreconcilable, Recovery can preserve and verify both current versions as backups before stopping that restore.
 
 ## Current limits
 

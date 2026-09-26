@@ -2,6 +2,7 @@ package com.chillednems.ikemenlab;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
@@ -262,15 +263,22 @@ public final class MainActivity extends Activity {
         input.setTextColor(Color.WHITE);
         input.setHintTextColor(0xffa8b9c7);
         input.setText(getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_RETENTION, ""));
+        LinearLayout panel = column();
+        panel.setBackgroundColor(0xff111d27);
+        panel.addView(label("Verified backups to keep", 20, true));
         ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(true);
         LinearLayout content = column();
-        content.setBackgroundColor(0xff111d27);
-        content.addView(label("Verified backups to keep", 20, true));
         content.addView(label("Leave empty for unlimited (default), or enter a positive number. Only verified app-managed backups are pruned after a successful write.", 15, false));
         content.addView(input, new LinearLayout.LayoutParams(-1, dp(52)));
         scroll.addView(content);
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(scroll).create();
-        content.addView(button("Save", () -> {
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout choices = new LinearLayout(this);
+        choices.setOrientation(LinearLayout.HORIZONTAL);
+        panel.addView(choices, new LinearLayout.LayoutParams(-1, dp(54)));
+        Dialog dialog = new Dialog(this);
+        dialog.setContentView(panel, new ViewGroup.LayoutParams(-1, -1));
+        choices.addView(button("Save", () -> {
                     String value = input.getText().toString().trim();
                     try {
                         if (!value.isEmpty() && Integer.parseInt(value) < 1) throw new NumberFormatException();
@@ -278,10 +286,10 @@ public final class MainActivity extends Activity {
                         dialog.dismiss();
                         showStatus(value.isEmpty() ? "Backup retention: unlimited." : "Keep " + value + " verified backups after future writes.");
                     } catch (NumberFormatException invalid) { showStatus("Enter a positive whole number, or leave empty for unlimited."); }
-                }), new LinearLayout.LayoutParams(-1, dp(52)));
-        content.addView(button("Cancel", dialog::dismiss), new LinearLayout.LayoutParams(-1, dp(52)));
+                }), new LinearLayout.LayoutParams(0, -1, 1));
+        choices.addView(button("Cancel", dialog::dismiss), new LinearLayout.LayoutParams(0, -1, 1));
         dialog.show();
-        if (compactLayout && dialog.getWindow() != null)
+        if (dialog.getWindow() != null)
             dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
     }
 
@@ -304,37 +312,48 @@ public final class MainActivity extends Activity {
     }
 
     private void showActionSheet(String title, String[] labels, Runnable[] actions) {
+        LinearLayout panel = column();
+        panel.setBackgroundColor(0xff111d27);
+        panel.addView(label(title, 20, true));
         ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(true);
         LinearLayout content = column();
-        content.setBackgroundColor(0xff111d27);
-        content.addView(label(title, 20, true));
         scroll.addView(content);
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(scroll).create();
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        Dialog dialog = new Dialog(this);
+        dialog.setContentView(panel, new ViewGroup.LayoutParams(-1, -1));
         for (int i = 0; i < labels.length; i++) {
             Runnable action = actions[i];
             content.addView(button(labels[i], () -> { dialog.dismiss(); action.run(); }),
                     new LinearLayout.LayoutParams(-1, dp(52)));
         }
-        content.addView(button("Close", dialog::dismiss), new LinearLayout.LayoutParams(-1, dp(52)));
+        panel.addView(button("Close", dialog::dismiss), new LinearLayout.LayoutParams(-1, dp(52)));
         dialog.show();
-        if (compactLayout && dialog.getWindow() != null)
+        if (dialog.getWindow() != null)
             dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+        scroll.post(() -> scroll.scrollTo(0, 0));
     }
 
     private void showDecisionSheet(String title, String message, String actionLabel, Runnable action) {
+        LinearLayout panel = column();
+        panel.setBackgroundColor(0xff111d27);
+        panel.addView(label(title, 20, true));
         ScrollView scroll = new ScrollView(this);
-        LinearLayout content = column();
-        content.setBackgroundColor(0xff111d27);
-        content.addView(label(title, 20, true));
-        content.addView(label(message, 15, false));
-        scroll.addView(content);
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(scroll).create();
-        if (action != null) content.addView(button(actionLabel, () -> { dialog.dismiss(); action.run(); }),
-                new LinearLayout.LayoutParams(-1, dp(52)));
-        content.addView(button("Close", dialog::dismiss), new LinearLayout.LayoutParams(-1, dp(52)));
+        scroll.setVerticalScrollBarEnabled(true);
+        scroll.addView(label(message, 15, false));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout choices = new LinearLayout(this);
+        choices.setOrientation(LinearLayout.HORIZONTAL);
+        panel.addView(choices, new LinearLayout.LayoutParams(-1, dp(54)));
+        Dialog dialog = new Dialog(this);
+        dialog.setContentView(panel, new ViewGroup.LayoutParams(-1, -1));
+        if (action != null) choices.addView(button(actionLabel, () -> { dialog.dismiss(); action.run(); }),
+                new LinearLayout.LayoutParams(0, -1, 1));
+        choices.addView(button("Close", dialog::dismiss), new LinearLayout.LayoutParams(0, -1, 1));
         dialog.show();
-        if (compactLayout && dialog.getWindow() != null)
+        if (dialog.getWindow() != null)
             dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+        scroll.post(() -> scroll.scrollTo(0, 0));
     }
 
     private void reviewSourceExport() {
@@ -558,7 +577,8 @@ public final class MainActivity extends Activity {
             if (target == null) throw new IOException("Pending source operation: reconnect source folder and open Recovery.");
             SelectStorage storage = new SelectStorage(root);
             String export = storage.inspectPending(target);
-            String restore = storage.inspectPendingRestore(target);
+            String restore = export.equals("RECOVERY_REQUIRED") || export.equals("OTHER_TARGET")
+                    ? "DEFERRED" : storage.inspectPendingRestore(target);
             if (export.equals("RECOVERY_REQUIRED") || export.equals("OTHER_TARGET")
                     || restore.equals("RECOVERY_REQUIRED") || restore.equals("OTHER_TARGET")
                     || restore.equals("LOCAL_RESTORE_REQUIRED"))
@@ -593,20 +613,27 @@ public final class MainActivity extends Activity {
                 SafSelectTarget target = new SafSelectTarget(getContentResolver(), current.sourceTree);
                 SelectStorage storage = new SelectStorage(root);
                 String export = storage.inspectPending(target);
-                String restore = storage.inspectPendingRestore(target);
+                String restore = export.equals("RECOVERY_REQUIRED") || export.equals("OTHER_TARGET")
+                        ? "DEFERRED" : storage.inspectPendingRestore(target);
                 runOnUiThread(() -> { if (isDestroyed() || !root.equals(library)) return;
                     busy = false;
                     if (export.equals("RECOVERY_REQUIRED")) {
                         showDecisionSheet("Repair interrupted export",
                                 "Destination: " + target.identity() + "\nRestore its exact pre-write bytes from the private recovery copy? This overwrites the current destination.",
                                 "Restore preimage", () -> executeRecovery(root, current, false));
-                    } else if (restore.equals("LOCAL_RESTORE_REQUIRED")) {
+                    } else if (export.equals("OTHER_TARGET"))
+                        showStatus("Pending export belongs to a different source folder. Reconnect the original folder first.");
+                    else if (restore.equals("LOCAL_RESTORE_REQUIRED")) {
                         showDecisionSheet("Finish interrupted restore",
                                 "The source was restored, but the private working roster still needs the selected backup. Complete that local step?",
                                 "Complete local copy", () -> executeRecovery(root, current, true));
-                    } else if (export.equals("OTHER_TARGET") || restore.equals("OTHER_TARGET")
-                            || export.equals("RECOVERY_REQUIRED") || restore.equals("RECOVERY_REQUIRED"))
-                        showStatus("Reconnect the original source folder for recovery (" + export + "/" + restore + ").");
+                    } else if (restore.equals("OTHER_TARGET"))
+                        showStatus("Recovery is bound to a different source folder. Reconnect the original folder.");
+                    else if (restore.equals("RECOVERY_REQUIRED")) {
+                        showDecisionSheet("Stop interrupted restore safely",
+                                "The source and private roster no longer match this pending restore. Preserve and verify both current versions as separate backups, then stop this restore? No roster will be overwritten. Destination: " + target.identity(),
+                                "Preserve both and stop", () -> abandonRecovery(root, current));
+                    }
                     else { recoveryIssue = null; showStatus("No interrupted source operation remains."); }
                 });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
@@ -633,6 +660,28 @@ public final class MainActivity extends Activity {
                 } });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
                 busy = false; showStatus("Recovery failed: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void abandonRecovery(File root, LibraryBinding current) {
+        if (busy) return;
+        busy = true;
+        IO.execute(() -> {
+            try {
+                current.requireCurrent(this);
+                SafSelectTarget target = new SafSelectTarget(getContentResolver(), current.sourceTree);
+                SelectStorage.AbandonResult result = new SelectStorage(root).abandonPendingRestore(target);
+                runOnUiThread(() -> { if (!isDestroyed() && root.equals(library)) {
+                    busy = false; recoveryIssue = null;
+                    showDecisionSheet("Current versions preserved",
+                            "The interrupted restore was stopped. Source backup: " + result.sourceBackupLocation
+                                    + "\nPrivate backup ID: " + result.workingVersionId
+                                    + "\nReview a fresh operation before making changes.",
+                            "Done", () -> { });
+                } });
+            } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
+                busy = false; showStatus("Recovery failed; pending restore kept: " + error.getMessage());
             } }); }
         });
     }
@@ -745,6 +794,14 @@ public final class MainActivity extends Activity {
             File expected = reconnectLibrary;
             reconnectLibrary = null;
             if (expected == null || !expected.equals(library)) return;
+            try {
+                LibraryBinding remembered = LibraryBinding.load(this, expected);
+                if (!LibraryBinding.acceptsReconnect(
+                        remembered.sourceTree == null ? null : remembered.sourceTree.toString(), uri.toString())) {
+                    showStatus("This is a different source folder. Reconnect the original folder, or use Switch folder to import another library.");
+                    return;
+                }
+            } catch (IOException error) { showStatus("Could not check the remembered source: " + error.getMessage()); return; }
             int flags = persistGrant(uri, data);
             busy = true;
             IO.execute(() -> {

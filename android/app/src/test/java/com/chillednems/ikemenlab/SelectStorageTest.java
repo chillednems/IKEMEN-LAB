@@ -293,6 +293,72 @@ public final class SelectStorageTest {
         catch (IOException expected) { assertTrue(expected.getMessage().contains("pending export")); }
         assertArrayEquals(bytes("before"), store.readWorking().bytes);
     }
+    @Test public void divergentRestoreCanBeAbandonedOnlyAfterBothCurrentCopiesAreVerified() throws Exception {
+        SelectStorage store = storage("working-current");
+        Fake target = new Fake("source-current");
+        File journal = pendingRestoreFixture(store, target, "source-before", "restored", "working-before");
+        assertEquals("RECOVERY_REQUIRED", store.inspectPendingRestore(target));
+        SelectStorage.AbandonResult result = store.abandonPendingRestore(target);
+        assertFalse(journal.exists());
+        assertArrayEquals(bytes("source-current"), target.readBackup(result.sourceBackupLocation.substring(result.sourceBackupLocation.lastIndexOf('/') + 1)));
+        assertArrayEquals(bytes("working-current"), store.readVersion(result.workingVersionId));
+        assertArrayEquals(bytes("source-current"), target.contents);
+        assertArrayEquals(bytes("working-current"), store.readWorking().bytes);
+        assertEquals("NONE", store.inspectPendingRestore(target));
+    }
+    @Test public void failedDivergentRestoreBackupKeepsJournalAndBothCurrentCopies() throws Exception {
+        SelectStorage store = storage("working-current");
+        Fake target = new Fake("source-current");
+        File journal = pendingRestoreFixture(store, target, "source-before", "restored", "working-before");
+        target.backupFailure = true;
+        try { store.abandonPendingRestore(target); fail(); } catch (IOException expected) { }
+        assertTrue(journal.isFile());
+        assertEquals("RECOVERY_REQUIRED", store.inspectPendingRestore(target));
+        assertEquals(0, store.listVersions().size());
+        assertArrayEquals(bytes("source-current"), target.contents);
+        assertArrayEquals(bytes("working-current"), store.readWorking().bytes);
+    }
+    @Test public void divergentSourceStillBacksUpUnchangedWorkingCopyBeforeAbandon() throws Exception {
+        SelectStorage store = storage("working-before");
+        Fake target = new Fake("source-third-value");
+        pendingRestoreFixture(store, target, "source-before", "restored", "working-before");
+        assertEquals("RECOVERY_REQUIRED", store.inspectPendingRestore(target));
+        SelectStorage.AbandonResult result = store.abandonPendingRestore(target);
+        assertArrayEquals(bytes("working-before"), store.readVersion(result.workingVersionId));
+        assertArrayEquals(bytes("source-third-value"), target.backup);
+        assertEquals("NONE", store.inspectPendingRestore(target));
+    }
+    @Test public void divergentRestoreCannotBeAbandonedForAnotherTargetOrPendingExport() throws Exception {
+        SelectStorage store = storage("working-current");
+        Fake target = new Fake("source-current");
+        File restore = pendingRestoreFixture(store, target, "source-before", "restored", "working-before");
+        Properties mismatched = new Properties();
+        try (java.io.InputStream input = Files.newInputStream(restore.toPath())) { mismatched.load(input); }
+        mismatched.setProperty("target", "fake://other/select.def");
+        try (java.io.OutputStream output = Files.newOutputStream(restore.toPath())) { mismatched.store(output, "fixture"); }
+        try { store.abandonPendingRestore(target); fail(); } catch (IOException expected) { }
+        assertTrue(restore.isFile());
+        mismatched.setProperty("target", target.identity());
+        try (java.io.OutputStream output = Files.newOutputStream(restore.toPath())) { mismatched.store(output, "fixture"); }
+        File export = new File(restore.getParentFile(), "pending-export.properties");
+        Files.write(export.toPath(), bytes("pending"));
+        try { store.abandonPendingRestore(target); fail(); } catch (IOException expected) { }
+        assertTrue(restore.isFile());
+        assertEquals(0, target.backupCalls);
+    }
+    private File pendingRestoreFixture(SelectStorage store, Fake target, String beforeSource,
+                                       String after, String beforeWorking) throws Exception {
+        store.listVersions();
+        Properties pending = new Properties();
+        pending.setProperty("target", target.identity());
+        pending.setProperty("beforeSource", SelectStorage.hash(bytes(beforeSource)));
+        pending.setProperty("after", SelectStorage.hash(bytes(after)));
+        pending.setProperty("beforeLocal", SelectStorage.hash(bytes(beforeWorking)));
+        File journal = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(),
+                "select-backups/pending-restore.properties");
+        try (java.io.OutputStream output = Files.newOutputStream(journal.toPath())) { pending.store(output, "fixture"); }
+        return journal;
+    }
     private static File storeRoot(SelectStorage store) throws Exception {
         java.lang.reflect.Field field = SelectStorage.class.getDeclaredField("root");
         field.setAccessible(true);

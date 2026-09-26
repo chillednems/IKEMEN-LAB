@@ -46,6 +46,9 @@ public final class LibraryBinding {
             throw new IOException("Could not save local library binding");
         return new LibraryBinding(workingRoot, null, 0, generation);
     }
+    static boolean acceptsReconnect(String rememberedTree, String selectedTree) {
+        return selectedTree != null && (rememberedTree == null || rememberedTree.equals(selectedTree));
+    }
     public void requireCurrent(Context context) throws IOException {
         LibraryBinding current = load(context, workingRoot);
         if (current.generation != generation ||

@@ -249,6 +249,43 @@ public final class SelectStorage {
         Files.deleteIfExists(pendingRestore().toPath());
         return result;
     }
+    public static final class AbandonResult {
+        public final String sourceBackupLocation, workingVersionId;
+        AbandonResult(String sourceBackupLocation, String workingVersionId) {
+            this.sourceBackupLocation = sourceBackupLocation;
+            this.workingVersionId = workingVersionId;
+        }
+    }
+    /** Preserve both current copies before discarding an irreconcilable restore journal. */
+    public synchronized AbandonResult abandonPendingRestore(External target) throws IOException {
+        try (Locked ignored = lock()) {
+            if (pendingJournal().exists()) throw new IOException("Resolve pending export before abandoning restore");
+            if (!pendingRestore().isFile()) throw new IOException("No pending source restore");
+            Properties pending = readProperties(pendingRestore());
+            if (!target.identity().equals(pending.getProperty("target")))
+                throw new IOException("Recovery target differs from pending restore");
+            byte[] source = checked(target.read());
+            byte[] working = readLimited(select);
+            String sourceHash = hash(source), workingHash = hash(working);
+            if ((sourceHash.equals(pending.getProperty("after")) && workingHash.equals(pending.getProperty("after")))
+                    || (sourceHash.equals(pending.getProperty("after")) && workingHash.equals(pending.getProperty("beforeLocal")))
+                    || sourceHash.equals(pending.getProperty("beforeSource")))
+                throw new IOException("Pending restore has a normal completion path; inspect Recovery again");
+            String transaction = UUID.randomUUID().toString();
+            String sourceLocation = target.backup(source, transaction);
+            if (sourceLocation == null || sourceLocation.isEmpty()
+                    || !MessageDigest.isEqual(checked(target.readBackup(transaction)), source))
+                throw new IOException("Current source backup failed verification");
+            Version localVersion = saveVersion(working, "abandoned source restore", "working");
+            if (localVersion == null || !workingHash.equals(localVersion.sha256))
+                throw new IOException("Current working backup failed verification");
+            if (!MessageDigest.isEqual(checked(target.read()), source)
+                    || !MessageDigest.isEqual(readLimited(select), working))
+                throw new IOException("Source or working roster changed during recovery; journal retained");
+            Files.delete(pendingRestore().toPath());
+            return new AbandonResult(sourceLocation, localVersion.id);
+        }
+    }
     /** Generic document providers cannot promise crash-atomic replacement. */
     public synchronized ExportResult executeExport(External target, ExportPlan plan) throws IOException {
         return executeExport(target, plan, false, null);
