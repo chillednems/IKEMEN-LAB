@@ -57,6 +57,34 @@ public final class AdvancedPreviewTest {
         System.arraycopy(green, 0, d, ldata + second + 4, green.length);
         return d;
     }
+    private static byte[] pcx(boolean ownsPalette, boolean green) {
+        byte[] data = new byte[128 + 2 + (ownsPalette ? 769 : 0)];
+        data[0] = 10; data[2] = 1; data[3] = 8; data[65] = 1;
+        put16(data, 66, 2); data[128] = 1; data[129] = 1;
+        if (ownsPalette) {
+            int p = data.length - 769; data[p] = 12;
+            data[p + (green ? 5 : 4)] = (byte) 255;
+        }
+        return data;
+    }
+    private static byte[] v1PaletteChain() {
+        byte[] first = pcx(true, false), second = pcx(true, true);
+        byte[] third = pcx(false, false), fourth = pcx(false, false);
+        int a = 64, b = a + 32 + first.length, c = b + 32 + second.length;
+        int d = c + 32 + third.length;
+        byte[] data = new byte[d + 32 + fourth.length];
+        System.arraycopy("ElecbyteSpr".getBytes(StandardCharsets.US_ASCII), 0, data, 0, 11);
+        data[15] = 1; put32(data, 20, 4); put32(data, 24, a);
+        put32(data, a, b); put32(data, a + 4, first.length); put16(data, a + 12, 1);
+        put32(data, b, c); put32(data, b + 4, second.length); put16(data, b + 12, 2);
+        put32(data, c, d); put32(data, c + 4, third.length); put16(data, c + 12, 3); data[c + 18] = 1;
+        put32(data, d + 4, fourth.length); put16(data, d + 12, 4); data[d + 18] = 1;
+        System.arraycopy(first, 0, data, a + 32, first.length);
+        System.arraycopy(second, 0, data, b + 32, second.length);
+        System.arraycopy(third, 0, data, c + 32, third.length);
+        System.arraycopy(fourth, 0, data, d + 32, fourth.length);
+        return data;
+    }
     private File file(String name, byte[] bytes) throws IOException {
         File f = folder.newFile(name); Files.write(f.toPath(), bytes); return f;
     }
@@ -77,6 +105,31 @@ public final class AdvancedPreviewTest {
         PreviewFrame frame = CharacterPreview.render(def, CharacterPreview.Mode.NEUTRAL, 40, 40);
         assertTrue(frame.source.contains("677,0"));
         assertTrue(java.util.Arrays.stream(frame.argb).anyMatch(pixel -> pixel == 0xff00ff00));
+    }
+
+    @Test public void linkedSpriteAlwaysUsesTargetDimensions() throws Exception {
+        byte[] mismatched = fixture(); put16(mismatched, 140, 3); put16(mismatched, 142, 2);
+        try (PreviewSff archive = new PreviewSff(file("mismatched.sff", mismatched))) {
+            PreviewSff.Sprite linked = archive.sprite(677, 0);
+            assertEquals(2, linked.width); assertEquals(2, linked.height);
+            assertEquals(4, linked.argb.length);
+            assertEquals(677, linked.group); assertEquals(0, linked.image);
+        }
+        byte[] zero = fixture(); put16(zero, 140, 0); put16(zero, 142, 0);
+        try (PreviewSff archive = new PreviewSff(file("zero.sff", zero))) {
+            PreviewSff.Sprite linked = archive.sprite(677, 0);
+            assertEquals(2, linked.width); assertEquals(2, linked.height);
+            assertEquals(4, linked.argb.length);
+        }
+    }
+
+    @Test public void v1SharedPaletteUsesPreviousUniquePalette() throws Exception {
+        try (PreviewSff archive = new PreviewSff(file("palettes.sff", v1PaletteChain()))) {
+            assertEquals(0xffff0000, archive.sprite(1, 0).argb[0]);
+            assertEquals(0xff00ff00, archive.sprite(2, 0).argb[0]);
+            assertEquals(0xff00ff00, archive.sprite(3, 0).argb[0]);
+            assertEquals(0xff00ff00, archive.sprite(4, 0).argb[0]);
+        }
     }
 
     @Test public void repeatedBgSectionsComposeInFileOrder() throws Exception {

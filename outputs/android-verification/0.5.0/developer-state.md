@@ -17,7 +17,7 @@ The supplied archive was checked for traversal, symlinks, duplicate paths, entry
 
 Real fixture checks using a separate local Java probe: Hiruzen, kfm, and Madara neutral poses rendered, including Madara AIR 0 reference 677,0 linked to sprite record 22. Stage0 rendered two layers, stage1 three, kfm seven, stageZ five, interactive training stage sixteen, and stage0-720 two. Stage3D returned a labeled SFF thumbnail. Representative rendered PNGs were inspected privately under `/private/tmp/ikemen-user-fixture/preview-audit`; they are not deliverable assets.
 
-Synthetic repository tests cover indexed palette PNG, a linked neutral frame referenced by AIR action 0 after collision lines, repeated BG sections and layer order, malicious offsets, composition work bounds, a 65 MB sparse SFF, and oversized PNG dimensions. Full Android unit tests, lintDebug, and assembleDebug passed with Gradle offline. Device UI and visual QA against the final integrated app remain for independent QA.
+Synthetic repository tests cover indexed palette PNG, a linked neutral frame referenced by AIR action 0 after collision lines, repeated BG sections and layer order, malicious offsets, composition work bounds, a 65 MB sparse SFF, and oversized PNG dimensions. Independent review of the initial backend found two decoder defects. The correction now always takes linked sprite dimensions from its decoded target while retaining the requested identity and axes; v1 shared palettes inherit the most recent unique palette, including a chain of shared sprites. Focused synthetic tests exercise both cases. All 21 Android unit tests, lintDebug, and assembleDebug passed with Gradle offline. Device UI and visual QA against the final integrated app remain for independent QA.
 
 ## Known limits
 

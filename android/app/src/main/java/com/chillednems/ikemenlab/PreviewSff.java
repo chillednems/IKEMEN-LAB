@@ -105,7 +105,7 @@ public final class PreviewSff implements Closeable {
         if (!within(source.start, source.length) || source.length > MAX_COMPRESSED) throw new IOException("Sprite data exceeds preview limit");
         byte[] bytes = read(source.start, (int) source.length);
         int[] pixels;
-        if (version < 2) pixels = pcx(source, bytes);
+        if (version < 2) pixels = pcx(source, at, bytes);
         else {
             if (bytes.length < 4) throw new IOException("Truncated SFF sprite");
             switch (source.format) {
@@ -116,9 +116,9 @@ public final class PreviewSff implements Closeable {
                 default: throw new IOException("Unsupported SFF sprite format " + source.format);
             }
         }
-        if (requested.width == 0 || requested.height == 0) {
-            requested.width = source.width; requested.height = source.height;
-        }
+        if (pixels.length != source.width * source.height) throw new IOException("Sprite pixels do not match dimensions");
+        // A linked header supplies identity and axes; its target supplies size and pixels.
+        requested.width = source.width; requested.height = source.height;
         return new Sprite(requested, pixels);
     }
 
@@ -149,7 +149,7 @@ public final class PreviewSff implements Closeable {
         return colors;
     }
 
-    private int[] pcx(Entry e, byte[] bytes) throws IOException {
+    private int[] pcx(Entry e, int sourceIndex, byte[] bytes) throws IOException {
         if (bytes.length < 128 || bytes[0] != 10 || bytes[3] != 8 || bytes[65] != 1) throw new IOException("Unsupported PCX");
         int w = u16(bytes, 8) - u16(bytes, 4) + 1, h = u16(bytes, 10) - u16(bytes, 6) + 1;
         if (!dimensions(w, h)) throw new IOException("PCX dimensions exceed preview limit");
@@ -157,16 +157,21 @@ public final class PreviewSff implements Closeable {
         int stride = u16(bytes, 66);
         if (stride < w || stride > 8192) throw new IOException("Invalid PCX stride");
         byte[] pal = null;
-        if (bytes.length >= 769 && bytes[bytes.length - 769] == 12) {
-            pal = new byte[768]; System.arraycopy(bytes, bytes.length - 768, pal, 0, 768);
-        } else if (e.samePalette && !entries.isEmpty()) {
-            Entry first = entries.get(0);
-            if (within(first.start, first.length) && first.length <= MAX_COMPRESSED) {
-                byte[] head = read(first.start, (int) first.length);
-                if (head.length >= 769 && head[head.length - 769] == 12) {
-                    pal = new byte[768]; System.arraycopy(head, head.length - 768, pal, 0, 768);
+        if (e.samePalette) {
+            // Shared palettes follow the preceding sprite, which can itself be shared.
+            for (int i = sourceIndex - 1; i >= 0; i--) {
+                Entry previous = entries.get(i);
+                if (previous.samePalette || previous.length < 769 || previous.length > MAX_COMPRESSED ||
+                    !within(previous.start, previous.length)) continue;
+                byte[] earlier = read(previous.start, (int) previous.length);
+                if (earlier[earlier.length - 769] == 12) {
+                    pal = new byte[768];
+                    System.arraycopy(earlier, earlier.length - 768, pal, 0, 768);
+                    break;
                 }
             }
+        } else if (bytes.length >= 769 && bytes[bytes.length - 769] == 12) {
+            pal = new byte[768]; System.arraycopy(bytes, bytes.length - 768, pal, 0, 768);
         }
         if (pal == null) throw new IOException("PCX palette unavailable");
         int[] out = new int[w * h]; int p = 128, end = bytes.length - (bytes.length >= 769 && bytes[bytes.length - 769] == 12 ? 769 : 0);
