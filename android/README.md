@@ -1,59 +1,50 @@
 # IKEMEN Lab for Android
 
-IKEMEN Lab browses an unpacked IKEMEN or MUGEN folder, previews supported character and stage artwork, and manages its `select.def` roster. Android 8.0 or newer is required. It does not launch a game.
+IKEMEN Lab lets you browse an unpacked IKEMEN or MUGEN library, preview supported character and stage artwork, and edit its `select.def` roster on Android 8.0 or newer. It does not launch a game. Touch and physical D-pad, stick, A, and B controls are supported.
 
-## Get a prerelease
+**Release status:** The newest [published Android prerelease is 0.5.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.5.0). This Android branch contains an **unreleased 0.6.0 candidate** under review. Its instructions below describe this branch's current app, not the 0.5.0 APK. [The 0.5.0 README](https://github.com/chillednems/IKEMEN-LAB/blob/android-v0.5.0/android/README.md) explains the older app, which copied a selected library into private storage. Earlier [0.1.0–0.5.0 screenshots](screenshots/README.md) use public-safe sample content. `main` has not received the Android app.
 
-The current Android prerelease is [0.5.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.5.0). Earlier checkpoints are [0.1.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.1.0), [0.2.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.2.0), [0.3.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.3.0), and [0.4.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.4.0). Install the APK from the version's release page. Release-signed versions use the same package and certificate, so you can install a newer release over an earlier release-signed one. A debug-signed APK requires a one-time uninstall before installing a release-signed APK.
+## Start using the 0.6.0 candidate
 
-These are Android development checkpoints from `codex/android-library`; `main` has not received the Android app. [Screenshots](screenshots/README.md) show public-safe sample artwork and the visible changes. The [roadmap](ROADMAP.md) distinguishes planned work from released features.
+1. Open **Settings → Source folder** and choose the unpacked library root containing `chars/` and `stages/`. Grant lasting read access, and write access if you want to export to its existing `data/select.def`. The app remembers this folder across launches. It reads character and stage files **in place**; it does not duplicate those folders in app storage.
+2. Search or scroll the library. Tap an item once to select it and again to enable or disable it. With physical controls, move focus using the D-pad or left stick and press **A** to select, then **A** again to toggle; **B** clears selection or goes back. Details show the artwork below the name, author, and reference. Missing entries stay visible in red with a text warning; disable them if needed, but restore their files before enabling them.
+3. Use **Export** on the main screen when you want the working roster written to the source `data/select.def`. The button stays visible in landscape, portrait, and compact layouts. If export is unavailable, the screen says why. You can also save a separate copy through **Roster actions → Save a copy elsewhere**.
 
-The unreleased [direct source access checkpoint](DIRECT-SOURCE-DEVELOPMENT.md) changes how the development branch reads character and stage files. The instructions below describe the published 0.5.0 APK.
+Settings always shows the current source folder, character preview choice, orientation, backup location, retention, and no-change warning state. Source selection and reconnection are both in Settings. Choosing the same source again keeps your unexported working roster; choosing a different source starts a separate working roster without changing either source folder.
 
-## Import and browse
+## Artwork and layout
 
-1. Choose **Switch folder** and pick the library root containing `chars/` and `stages/`. Allow read and write access if Android offers it. **In 0.5.0 and earlier, the app copies the entire folder into its private storage.** This may use substantial extra space for large character and stage collections. The app remembers that copy between launches; the picked source is unchanged during import. Directly referencing the selected source without copying `chars/` and `stages/` is planned for the next storage update.
-2. Search or scroll characters and stages. Tap an item once to select it; tap the selected item again to toggle its roster state. On a controller, move focus with the D-pad or left stick and press **A** once to select, then **A** again to toggle. **B** clears the selection or goes back.
-3. Details show name, author, reference, and preview before file paths and roster controls. The list and details scroll separately. Missing roster references remain visible in red with a text warning; a missing entry can be disabled but cannot be enabled until its file is restored.
+**Settings → Character preview** offers a neutral stance from AIR action 0, a portrait, or the neutral stance over the portrait. Details identify the sprite used and explain fallbacks. Supported 2D stages show a static background composition at their starting camera position; unsupported scenes may show a labeled thumbnail or an unavailable reason. These are still images, not animated gameplay or 3D rendering. Each list and details pane scrolls independently, and the details pane remains visible while you move through the list. Choose **Settings → Screen orientation** for portrait or landscape; the choice persists.
 
-On a short landscape window, **More** offers **Switch folder** and **Manage roster & settings**; the latter opens Roster actions and Settings. The toolbar has a direct **Portrait** control. On larger windows, these controls appear in the main action row. You can change back to Landscape through **Settings → Screen orientation**. The orientation choice persists.
+Some Android document providers cannot offer seekable access to SFF artwork. In that case, browsing still works and the preview explains why it is unavailable. The app does not copy large artwork to work around that limitation. Previews support PNG and bounded SFF v1 8-bit PCX and SFF v2 indexed or embedded PNG sprites; unsupported encodings, missing palettes, or malformed images may not render.
 
-## Artwork previews
+## Review and export `select.def`
 
-Character details default to a static neutral stance from AIR action 0. In **Settings → Character preview**, choose **Portrait** or **Neutral over portrait** instead; the choice is saved. Details name the sprite or scene used and explain when a requested view falls back to another supported image. Images fit inside the preview area without cropping.
+The app keeps a small private **working roster** so you can review edits before writing the source. **Export** compares it with the exact existing source `data/select.def`, shows enabled, disabled, added, and removed counts, warns about missing references, and identifies where the verified pre-write backup will go. It refuses to overwrite a source or backup destination that changed after review. A write makes a verified backup of the old source bytes, replaces the existing `select.def`, and reads it back. The linked-source export does not create `select.def.txt`.
 
-Stage details show a static composition of supported 2D background layers at the stage's starting camera position. A 3D or layerless stage may show an explicitly labeled SFF thumbnail instead of a full scene.
+If the working and source files match, a warning appears by default with a **Review Export anyway** option. You can turn that extra warning off in **Settings → No-change export warning**. In either mode, exporting still takes a separate tap on the normal review, creates a verified preimage backup, and reads back the source. The setting never starts a write by itself. If the source grants only read access, browse normally and reconnect with write access before exporting. A folder without an existing `data/select.def` can be browsed but has no linked file to overwrite.
 
-## Export safely to the source folder
+## Choose and restore backups
 
-Open **Roster actions → Review export to linked source**. The review shows the exact existing destination, counts of enabled, disabled, added, and removed references, missing-reference warnings, and the pre-write backup location. **No changes** means the source already matches the private roster.
+In **Settings → Select.def backup location**, choose where verified **source preimages** are saved before exports and source restores:
 
-Choose **Back up and overwrite** only after checking the review. The app first saves and verifies the exact source preimage in `data/select-backups/`, then updates the existing `data/select.def` and reads it back. If the destination changed after the review, the operation stops and asks for a fresh preview. It does not create a numbered `select.def` or `select.def.txt` in the source. A provider that cannot preserve the exact backup filename or write safely stops the export.
+- **Source data/select-backups** is the default and keeps them beside the game data.
+- **App backup directory** stores them privately, in a source-specific area of the app.
+- **Custom folder** uses a folder you choose. The app creates a source-specific subfolder inside it. If the picker is canceled or the provider cannot grant lasting read/write access, your previous selection stays in place.
 
-**Roster actions → Save a copy elsewhere** still uses Android's document picker. That copy does not update the linked source folder; use it when moving a roster to another installation manually. Check the filename your provider creates.
+Changing the selection does not delete or move older backups. **Roster actions → Backups and restore** lists verified versions with their location. Choose **Load local only** to replace the working roster without touching the source, or **Review source and local restore** to back up the current source and apply the chosen version to both. The new preimage goes to your **current** backup location even when the version you selected came from an older location. The separate **app working undo and recovery** snapshots remain private regardless of this setting. If source access is lost, those private snapshots and app backup versions remain available to load locally; reconnect in Settings before writing the source.
 
-## Backups and restore
+**Settings → Backups to keep** defaults to unlimited. Set a positive number to prune only this app's verified, managed backups after a successful write. A selected restore version and the immediate pre-write backup may temporarily exceed the limit. Unmanaged files are not removed. If an interrupted source operation needs attention, use **Roster actions → Recovery** before editing or exporting again.
 
-Every changed private roster edit saves a verified private version. A successful source overwrite saves a verified source preimage. Open **Roster actions → Backups and restore** to see available private and source versions. Select a version, then choose:
+## Limits and upgrades
 
-- **Load local only** to replace the app's private working roster while leaving the source untouched.
-- **Source and local** to review the exact source replacement, back up its current bytes, then apply the selected version to both source and private working roster.
+The selected library must be an unpacked folder, not a ZIP/RAR/7z archive. Browsing is bounded to 20,000 listed entries and 20 folder levels. There is no 8 GB full-folder copy limit in this candidate because characters and stages stay in the selected source. Earlier 0.5.0 private copies, working roster edits, and backups are preserved on upgrade; the app does not silently delete them or fall back to stale copied content if source permission is lost. Reconnect the original folder in Settings when needed. [Storage and migration details](DIRECT-SOURCE-DEVELOPMENT.md) describe the development candidate.
 
-In **Settings → Backups to keep**, leave the field empty for unlimited history (the default), or enter a positive number. Finite retention applies after successful writes and prunes only verified backups managed by this app. A restore may temporarily keep its selected version and immediate pre-write backup beyond that number. Unmanaged files are left alone.
-
-If the source folder's permission is revoked or you upgrade from an older local-only library, choose **Settings → Reconnect source folder** (also available in Roster actions) and pick the original folder again. Reconnect accepts only the previously linked folder; use **Switch folder** to import a different library. Your private copy remains available. If an interrupted source operation needs attention, **Roster actions → Recovery** shows the required step; normal edits and exports remain blocked until it is resolved. If a restore is irreconcilable, Recovery can preserve and verify both current versions as backups before stopping that restore.
-
-## Current limits
-
-Import accepts an unpacked folder rather than a ZIP/RAR/7z archive, with up to 20,000 entries, 8 GB of copied data, and 20 folder levels. Failed imports remove their partial staging copy. Switching folders retains earlier managed copies in private app storage; uninstalling the app removes those copies and their private backups. If storage is tight, check available space before importing a large collection. Source-folder references without these library copies are planned, but are not in 0.5.0.
-
-On a portrait Android emulator, the navigation bar can overlap the bottom of an export-review panel. Use landscape for export review if the buttons are obscured on your device. Physical Odin 3 behavior has not yet been checked.
-
-Previews support direct PNG and bounded SFF v1 8-bit PCX and SFF v2 indexed or embedded PNG sprites. They are still images: character previews do not animate, and stage previews do not run gameplay, GLB/3D rendering, or every BG effect. Unsupported encodings, missing palettes, oversized or malformed images may be unavailable. Legacy Japanese `.def` metadata uses heuristic decoding and can misread a one-character field. The app does not manage screenpacks, install content into a game, or launch IKEMEN GO.
+This candidate has not yet completed signed-device QA, including physical Odin 3 touch/controller checks. Screenpack preview and roster arrangement, importing new game content, and game launching are future work; see the [roadmap](ROADMAP.md).
 
 ## Build from source
 
-The package ID is `com.chillednems.ikemenlab`; this source is version 0.5.0 (version code 5). Install JDK 17 and Android SDK platform/build tools 36. From `android/`, run:
+The package ID is `com.chillednems.ikemenlab`; this branch is version 0.6.0 (version code 6). Install JDK 17 and Android SDK platform/build tools 36. From `android/`, run:
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug

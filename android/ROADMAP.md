@@ -4,11 +4,11 @@ This page describes requested work that is **not yet in a released APK**. Androi
 
 ## Direct library access
 
-The next storage change should keep the selected library's `chars/` and `stages/` in place and use Android's persisted folder permission to read them across launches. It must not duplicate whole character or stage collections in app-private storage. Small app settings, roster working state, backups placed in the app's own directory by user choice, and bounded temporary preview data may still be stored there. This replaces the current full-folder copy behavior; existing users need a safe transition that preserves their selected library and roster edits.
+The 0.6.0 development candidate keeps the selected library's `chars/` and `stages/` in place using Android's persisted folder permission. It does not duplicate whole character or stage collections in app-private storage. Small app settings, roster working state, and backups placed in the app's own directory by user choice may still be stored there. The earlier private copy is retained on upgrade; verification and release approval remain pending. See [candidate behavior](DIRECT-SOURCE-DEVELOPMENT.md).
 
 ## Export and backup choices
 
-An unchanged `select.def` should produce a clear prompt with **Export anyway**. A setting controls whether this unchanged-export message appears; it defaults to showing the message. Backups should offer three destinations: the default `select-backups` location in the selected IKEMEN data folder, the app's backup directory, or a user-selected writable directory. Exports and restores must state where the pre-write backup went and retain recovery checks.
+The 0.6.0 development candidate prompts on an unchanged `select.def` by default with an explicit **Export anyway** path. A setting can skip that extra prompt without skipping the normal review. It offers three preimage destinations: the default `select-backups` location in the selected IKEMEN data folder, the app's backup directory, or a user-selected writable directory. Exports and restores state the destination and retain recovery checks. Verification and release approval remain pending.
 
 ## Character-select view
 
@@ -22,4 +22,4 @@ For visible features, add public-safe screenshots to the Android branch and the 
 
 ## Portrait export controls follow-up
 
-Check the export-review panel against Android navigation insets and controller focus in portrait mode. An emulator capture shows the bottom controls near or behind the navigation bar; one comparable 0.5.0 sheet tap returned to Home. Verify the actual hit targets on representative displays and the Odin 3, then adjust layout if needed.
+The 0.6.0 development candidate pads action sheets for Android navigation insets. Emulator and Odin 3 hit-target verification is still required before treating the portrait overlap as resolved.
