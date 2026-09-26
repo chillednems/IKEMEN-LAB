@@ -391,6 +391,38 @@ public final class SelectStorageTest {
         assertArrayEquals(chosen, store.readWorking().bytes);
         assertEquals("NONE", store.inspectPendingRestore(target));
     }
+    @Test public void pendingCustomRestoreIdentifiesAndVerifiesExactHistoricalStore() throws Exception {
+        SelectStorage store = storage("local-before");
+        store.listVersions();
+        String id = "33333333-3333-3333-3333-333333333333";
+        String requiredStore = "custom:content://provider/tree/old:ikemen-select-source-a";
+        byte[] selected = bytes("selected-old-custom-backup");
+        Fake target = new Fake("selected-old-custom-backup") {
+            @Override public byte[] readBackup(String version, String location) throws IOException {
+                if (!id.equals(version) || !requiredStore.equals(location))
+                    throw new IOException("Wrong historical custom folder");
+                return selected.clone();
+            }
+        };
+        Properties pending = new Properties();
+        pending.setProperty("version", id);
+        pending.setProperty("origin", "SOURCE");
+        pending.setProperty("storeIdentity", requiredStore);
+        pending.setProperty("target", target.identity());
+        pending.setProperty("beforeLocal", store.readWorking().sha256);
+        pending.setProperty("after", SelectStorage.hash(selected));
+        pending.setProperty("beforeSource", SelectStorage.hash(bytes("previous-source")));
+        pending.setProperty("retention", "unlimited");
+        File journal = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(),
+                "select-backups/pending-restore.properties");
+        try (java.io.OutputStream output = Files.newOutputStream(journal.toPath())) { pending.store(output, "fixture"); }
+        assertEquals(requiredStore, store.pendingRestoreBackupStoreIdentity());
+        store.verifyPendingRestoreBackup(target);
+        pending.setProperty("storeIdentity", "custom:content://provider/tree/wrong:ikemen-select-source-b");
+        try (java.io.OutputStream output = Files.newOutputStream(journal.toPath())) { pending.store(output, "fixture"); }
+        try { store.verifyPendingRestoreBackup(target); fail(); } catch (IOException expected) { }
+        assertArrayEquals(bytes("local-before"), store.readWorking().bytes);
+    }
     @Test public void pendingExportBlocksLocalEditUntilRecoveryIsInspected() throws Exception {
         SelectStorage store = storage("before");
         File journal = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(),

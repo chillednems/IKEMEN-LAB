@@ -261,6 +261,22 @@ public final class SelectStorage {
         }
         return "RECOVERY_REQUIRED";
     }
+    /** Identifies the exact external version needed to finish an interrupted local restore. */
+    public String pendingRestoreBackupStoreIdentity() throws IOException {
+        if (!pendingRestore().isFile()) return null;
+        Properties pending = readProperties(pendingRestore());
+        if (!"SOURCE".equals(pending.getProperty("origin"))) return null;
+        return pending.getProperty("storeIdentity", "source:" + pending.getProperty("target", ""));
+    }
+    public void verifyPendingRestoreBackup(External target) throws IOException {
+        if (!pendingRestore().isFile()) throw new IOException("No pending source restore");
+        Properties pending = readProperties(pendingRestore());
+        if (!"SOURCE".equals(pending.getProperty("origin"))) return;
+        String store = pendingRestoreBackupStoreIdentity();
+        byte[] bytes = target.readBackup(pending.getProperty("version"), store);
+        if (!hash(bytes).equals(pending.getProperty("after")))
+            throw new IOException("The selected restore backup is missing or changed");
+    }
     public CommitResult completePendingRestore(External target) throws IOException {
         if (!"LOCAL_RESTORE_REQUIRED".equals(inspectPendingRestore(target)))
             throw new IOException("Pending source restore is not ready to complete");
