@@ -2,11 +2,11 @@
 
 IKEMEN Lab lets you browse an unpacked IKEMEN or MUGEN library, preview supported character and stage artwork, and edit its `select.def` roster on Android 8.0 or newer. It does not launch a game. Touch and physical D-pad, stick, A, and B controls are supported.
 
-**Release status:** The newest [published Android prerelease is 0.5.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.5.0). This Android branch contains an **unreleased 0.6.0 candidate** under review. Its instructions below describe this branch's current app, not the 0.5.0 APK. [The 0.5.0 README](https://github.com/chillednems/IKEMEN-LAB/blob/android-v0.5.0/android/README.md) explains the older app, which copied a selected library into private storage. Earlier [0.1.0–0.5.0 screenshots](screenshots/README.md) use public-safe sample content. `main` has not received the Android app.
+**Get the prerelease:** [Android 0.6.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0) is the current prerelease from `codex/android-library`. Install its signed APK over an earlier release-signed version. The older [0.5.0 release](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.5.0) copied a selected library into private storage; its [historical README](https://github.com/chillednems/IKEMEN-LAB/blob/android-v0.5.0/android/README.md) describes that behavior. The instructions below describe 0.6.0. `main` has not received the Android app.
 
-The [0.6.0 candidate screenshots](screenshots/README.md#060-development-candidate) show the visible Export action, current Settings values, and the selected character preview setting with self-created sample content.
+The [0.6.0 screenshots](screenshots/README.md#060) show the visible Export action, current Settings values, and the selected character preview setting with self-created sample content.
 
-## Start using the 0.6.0 candidate
+## Start using 0.6.0
 
 1. Open **Settings → Source folder** and choose the unpacked library root containing `chars/` and `stages/`. Grant lasting read access, and write access if you want to export to its existing `data/select.def`. The app remembers this folder across launches. It reads character and stage files **in place**; it does not duplicate those folders in app storage.
 2. Search or scroll the library. Tap an item once to select it and again to enable or disable it. With physical controls, move focus using the D-pad or left stick and press **A** to select, then **A** again to toggle; **B** clears selection or goes back. Details show the artwork below the name, author, and reference. Missing entries stay visible in red with a text warning; disable them if needed, but restore their files before enabling them.
@@ -40,9 +40,9 @@ Changing the selection does not delete or move older backups. **Roster actions �
 
 ## Limits and upgrades
 
-The selected library must be an unpacked folder, not a ZIP/RAR/7z archive. Browsing is bounded to 20,000 listed entries and 20 folder levels. There is no 8 GB full-folder copy limit in this candidate because characters and stages stay in the selected source. Earlier 0.5.0 private copies, working roster edits, and backups are preserved on upgrade; the app does not silently delete them or fall back to stale copied content if source permission is lost. Reconnect the original folder in Settings when needed. [Storage and migration details](DIRECT-SOURCE-DEVELOPMENT.md) describe the development candidate.
+The selected library must be an unpacked folder, not a ZIP/RAR/7z archive. Browsing is bounded to 20,000 listed entries and 20 folder levels. There is no 8 GB full-folder copy limit in 0.6.0 because characters and stages stay in the selected source. Earlier 0.5.0 private copies, working roster edits, and backups are preserved on upgrade; the app does not silently delete them or fall back to stale copied content if source permission is lost. Reconnect the original folder in Settings when needed. [Storage and migration details](DIRECT-SOURCE-DEVELOPMENT.md) explain the transition.
 
-This candidate has not yet completed signed-device QA, including physical Odin 3 touch/controller checks. Screenpack preview and roster arrangement, importing new game content, and game launching are future work; see the [roadmap](ROADMAP.md).
+The signed APK passed emulator checks with Android's external-storage provider. Physical Odin 3 touch/controller behavior and other providers' permission and recovery edge cases remain unverified. Screenpack preview and roster arrangement, importing new game content, and game launching are future work; see the [roadmap](ROADMAP.md).
 
 ## Build from source
 

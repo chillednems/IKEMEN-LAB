@@ -36,9 +36,9 @@ Choose neutral, portrait, or combined character artwork. The screenshot shows th
 
 A supported 2D stage shows a static composition of two background layers.
 
-## 0.6.0 development candidate
+## 0.6.0
 
-These actual-app captures use a self-created demonstration library. They were captured from signed candidate `c0b38d9`; the later recovery-only correction does not change these screens. Version 0.6.0 has not been published.
+These actual-app captures use a self-created demonstration library. They were captured from signed candidate `c0b38d9`; later recovery corrections did not change these screens. See the [0.6.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0) for its APK and screenshots.
 
 ![Library browser with visible Export action in landscape](android-v0.6.0-landscape-export.png)
 
