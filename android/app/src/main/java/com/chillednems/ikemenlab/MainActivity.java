@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
 import android.provider.DocumentsContract;
+import android.database.Cursor;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -47,6 +48,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_TREE = 100;
     private static final int EXPORT_SELECT = 101;
     private static final int RECONNECT_TREE = 102;
+    private static final int PICK_BACKUP_TREE = 103;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final ExecutorService PREVIEW = Executors.newSingleThreadExecutor();
     private static final String PREFS = "library";
@@ -54,6 +56,7 @@ public final class MainActivity extends Activity {
     private static final String KEY_ORIENTATION = "orientation";
     private static final String KEY_RETENTION = "backup_retention";
     private static final String KEY_PREVIEW_MODE = "character_preview_mode";
+    private static final String KEY_NO_CHANGE_WARNING = "warn_unchanged_export";
     private LinearLayout root;
     private FrameLayout screenFrame;
     private LinearLayout activeSheet;
@@ -61,6 +64,8 @@ public final class MainActivity extends Activity {
     private LinearLayout list;
     private LinearLayout detail;
     private Button rosterButton;
+    private Button exportButton;
+    private TextView exportHint;
     private TextView status;
     private boolean compactLayout;
     private boolean forceCompactLayout;
@@ -68,8 +73,11 @@ public final class MainActivity extends Activity {
     private File library;
     private LibraryBinding binding;
     private File reconnectLibrary;
+    private File backupPickerLibrary;
+    private LibraryBinding backupPickerBinding;
     private String recoveryIssue;
     private LibraryScanner.Catalog catalog;
+    private boolean sourceSelectExists;
     private LibraryScanner.Item selected;
     private String restoreSelection;
     private String searchText = "";
@@ -211,16 +219,23 @@ public final class MainActivity extends Activity {
             more.setOnClickListener(this::showCompactMenu);
             toolbar.addView(more, new LinearLayout.LayoutParams(dp(88), dp(48)));
             toolbar.addView(search, new LinearLayout.LayoutParams(0, dp(48), 1));
-            toolbar.addView(button("Portrait", () -> chooseOrientation("portrait")), new LinearLayout.LayoutParams(dp(108), dp(48)));
+            exportButton = button("Export", this::reviewSourceExport);
+            toolbar.addView(exportButton, new LinearLayout.LayoutParams(dp(88), dp(48)));
+            toolbar.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(dp(94), dp(48)));
+            exportHint = label("", 13, false);
+            root.addView(exportHint);
             status = null;
         } else {
             root.addView(label("IKEMEN Lab · Android library", 24, true));
             LinearLayout actions = new LinearLayout(this);
             actions.setOrientation(LinearLayout.HORIZONTAL);
             root.addView(actions);
-            actions.addView(button("Switch folder", this::pickFolder), new LinearLayout.LayoutParams(0, dp(58), 1));
+            exportButton = button("Export", this::reviewSourceExport);
+            actions.addView(exportButton, new LinearLayout.LayoutParams(0, dp(58), 1));
             actions.addView(button("Roster actions", this::showRosterActions), new LinearLayout.LayoutParams(0, dp(58), 1));
             actions.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(0, dp(58), 1));
+            exportHint = label("", 13, false);
+            root.addView(exportHint);
             status = label("Choose an IKEMEN folder with chars and stages.", 14, false);
             status.setSingleLine(true);
             status.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -252,6 +267,7 @@ public final class MainActivity extends Activity {
             panels.addView(detailScroll, new LinearLayout.LayoutParams(-1, 0, 1));
         }
         renderList();
+        updateExportAvailability();
     }
 
     private void applyOrientation() {
@@ -262,8 +278,21 @@ public final class MainActivity extends Activity {
 
     private void showSettings() {
         if (busy) return;
-        showActionSheet("Settings", new String[]{"Character preview", "Screen orientation", "Backups to keep", "Reconnect source folder"},
-                new Runnable[]{this::showPreviewSetting, this::showOrientationSetting, this::showRetentionSetting, this::reconnectSource});
+        String orientation = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_ORIENTATION, "landscape");
+        String destination;
+        try { destination = library == null ? "Choose source first" : BackupPolicy.load(this, library).displayName(); }
+        catch (IOException unavailable) { destination = "Unavailable"; }
+        boolean warn = warnUnchangedExport();
+        showActionSheet("Settings", new String[]{"Source folder · " + sourceFolderLabel(),
+                        "Character preview · " + PreviewChoice.label(previewMode()),
+                        "Screen orientation · " + ("portrait".equals(orientation) ? "Portrait" : "Landscape"),
+                        "Select.def backup location · " + destination,
+                        "Backups to keep · " + retentionLabel(),
+                        "No-change export warning · " + (warn ? "On" : "Off"),
+                        "Reconnect source folder"},
+                new Runnable[]{this::pickFolder, this::showPreviewSetting, this::showOrientationSetting,
+                        this::showBackupLocationSetting, this::showRetentionSetting,
+                        this::showUnchangedSetting, this::reconnectSource});
     }
 
     private CharacterPreview.Mode previewMode() {
@@ -273,7 +302,9 @@ public final class MainActivity extends Activity {
 
     private void showPreviewSetting() {
         showActionSheet("Character preview · " + PreviewChoice.label(previewMode()),
-                new String[]{"Neutral stance (default)", "Portrait", "Neutral over portrait"},
+                new String[]{choiceLabel(previewMode() == CharacterPreview.Mode.NEUTRAL, "Neutral stance"),
+                        choiceLabel(previewMode() == CharacterPreview.Mode.PORTRAIT, "Portrait"),
+                        choiceLabel(previewMode() == CharacterPreview.Mode.NEUTRAL_OVER_PORTRAIT, "Neutral over portrait")},
                 new Runnable[]{() -> choosePreviewMode(CharacterPreview.Mode.NEUTRAL),
                         () -> choosePreviewMode(CharacterPreview.Mode.PORTRAIT),
                         () -> choosePreviewMode(CharacterPreview.Mode.NEUTRAL_OVER_PORTRAIT)});
@@ -334,12 +365,64 @@ public final class MainActivity extends Activity {
         throw new IOException("Backup retention must be a positive whole number or unlimited");
     }
 
+    private boolean warnUnchangedExport() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_NO_CHANGE_WARNING, true);
+    }
+
+    private void showUnchangedSetting() {
+        boolean warn = warnUnchangedExport();
+        showActionSheet("No-change export warning", new String[]{
+                        choiceLabel(warn, "Show warning before Export anyway (default)"),
+                        choiceLabel(!warn, "Skip extra warning; keep export review")},
+                new Runnable[]{() -> chooseUnchangedWarning(true), () -> chooseUnchangedWarning(false)});
+    }
+
+    private void chooseUnchangedWarning(boolean enabled) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_NO_CHANGE_WARNING, enabled).apply();
+        showStatus("No-change export warning " + (enabled ? "on" : "off") + ". Export still requires a review and tap.");
+    }
+
+    private void showBackupLocationSetting() {
+        if (library == null) { showStatus("Choose a source folder in Settings before selecting where backups go."); return; }
+        BackupPolicy policy;
+        try { policy = BackupPolicy.load(this, library); }
+        catch (IOException error) { showStatus("Backup setting unavailable: " + error.getMessage()); return; }
+        showActionSheet("Verified source preimage backups · " + policy.displayName(),
+                new String[]{choiceLabel(policy.kind == BackupPolicy.Kind.SOURCE, "Source data/select-backups (default)"),
+                        choiceLabel(policy.kind == BackupPolicy.Kind.APP, "App backup directory"),
+                        choiceLabel(policy.kind == BackupPolicy.Kind.CUSTOM,
+                                "Custom folder" + (policy.customTree == null ? "" : " · " + policy.customName))},
+                new Runnable[]{() -> chooseBackupLocation(BackupPolicy.Kind.SOURCE),
+                        () -> chooseBackupLocation(BackupPolicy.Kind.APP), this::pickCustomBackupFolder});
+    }
+
+    private void chooseBackupLocation(BackupPolicy.Kind kind) {
+        if (library == null) return;
+        if (hasPending(library)) { showStatus("Resolve pending source recovery before changing the backup location."); return; }
+        try {
+            BackupPolicy chosen = BackupPolicy.choose(this, library, kind, null, null);
+            showStatus("Verified source preimage backups: " + chosen.displayName()
+                    + ". App working undo and recovery snapshots remain private.");
+        } catch (IOException error) { showStatus("Backup setting unchanged: " + error.getMessage()); }
+    }
+
+    private void pickCustomBackupFolder() {
+        if (busy || library == null) return;
+        if (hasPending(library)) { showStatus("Resolve pending source recovery before changing the backup location."); return; }
+        backupPickerLibrary = library;
+        backupPickerBinding = binding;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, PICK_BACKUP_TREE);
+    }
+
     private void showRosterActions() {
         if (busy) return;
         showActionSheet("Roster actions", new String[]{"Refresh library", "Review export to linked source", "Backups and restore",
-                        "Save a copy elsewhere", "Reconnect source folder", "Recovery"},
-                new Runnable[]{this::refreshCatalog, this::reviewSourceExport, this::showBackups, this::pickExport,
-                        this::reconnectSource, this::showRecovery});
+                        "Save a copy elsewhere", "Recovery"},
+                new Runnable[]{this::refreshCatalog, this::reviewSourceExport, this::showBackups,
+                        this::pickExport, this::showRecovery});
     }
 
     private void showActionSheet(String title, String[] labels, Runnable[] actions) {
@@ -390,9 +473,22 @@ public final class MainActivity extends Activity {
         sheetPreviousFocus = getCurrentFocus();
         activeSheet = panel;
         panel.setBackgroundColor(0xff111d27);
-        panel.setPadding(dp(4), root.getPaddingTop(), dp(4), dp(2));
+        panel.setOnApplyWindowInsetsListener((view, insets) -> {
+            int left, top, right, bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                left = bars.left; top = bars.top; right = bars.right; bottom = bars.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(dp(4) + left, dp(4) + top, dp(4) + right, dp(8) + bottom);
+            return insets;
+        });
+        panel.setPadding(dp(4), dp(4), dp(4), dp(8));
         panel.setClickable(true);
         screenFrame.addView(panel, new FrameLayout.LayoutParams(-1, -1));
+        panel.requestApplyInsets();
         root.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         scroll.setFocusableInTouchMode(true);
         scroll.requestFocus();
@@ -431,7 +527,7 @@ public final class MainActivity extends Activity {
         showStatus("Checking exact source destination…");
         IO.execute(() -> {
             try {
-                SafSelectTarget target = requireReady(root, current, true);
+                SelectStorage.External target = requireReady(root, current, true);
                 SelectStorage storage = new SelectStorage(root, openSource(current));
                 SelectStorage.Snapshot working = storage.readWorking();
                 SelectStorage.ExportPlan plan = storage.planExport(target, working.sha256);
@@ -444,13 +540,20 @@ public final class MainActivity extends Activity {
                     boolean changed = !plan.sourceHash.equals(plan.workingHash);
                     String message = (changed ? "Destination: linked " : "No changes · linked ")
                             + shortTargetName(plan.targetIdentity) + "\n" + changeCounts(changes)
-                            + "\nBackup before overwrite: " + (changed ? "yes" : "not needed")
+                            + "\nVerified source preimage backup before overwrite: yes"
                             + "\nMissing references: " + plan.missingWarnings.size()
                             + "\n\nExact document: " + plan.targetIdentity
                             + "\nBackup folder: " + plan.backupDestination
-                            + "\nVerified backups to keep: " + (keep == null ? "unlimited" : keep);
-                    showDecisionSheet("Review source export", message,
-                            "Back up and overwrite", changed ? () -> executeSourceExport(root, current, plan, keep) : null);
+                            + "\nVerified backups to keep: " + (keep == null ? "unlimited" : keep)
+                            + "\nApp working undo and recovery snapshots stay private.";
+                    Runnable review = () -> showDecisionSheet("Review source export", message,
+                            changed ? "Back up and overwrite" : "Export anyway",
+                            () -> executeSourceExport(root, current, plan, keep, !changed));
+                    if (!changed && warnUnchangedExport())
+                        showDecisionSheet("No changes to select.def",
+                                "The working roster matches the linked source. You can still export after reviewing the exact destination and backup plan.",
+                                "Review Export anyway", review);
+                    else review.run();
                 });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
                 busy = false; showStatus("Export preview unavailable: " + error.getMessage());
@@ -458,13 +561,18 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void executeSourceExport(File root, LibraryBinding current, SelectStorage.ExportPlan plan, Integer keep) {
+    private void executeSourceExport(File root, LibraryBinding current, SelectStorage.ExportPlan plan,
+                                     Integer keep, boolean forceNoChange) {
         if (busy) return;
         busy = true;
         IO.execute(() -> {
             try {
-                SafSelectTarget target = requireReady(root, current, true);
-                SelectStorage.ExportResult result = new SelectStorage(root).executeExport(target, plan, keep);
+                SelectStorage.External target = requireReady(root, current, true);
+                if (!java.util.Objects.equals(keep, retention()))
+                    throw new IOException("Backup retention changed; review export again");
+                SelectStorage.ExportResult result = forceNoChange
+                        ? new SelectStorage(root).executeExportAnyway(target, plan, keep)
+                        : new SelectStorage(root).executeExport(target, plan, keep);
                 runOnUiThread(() -> { if (sameBinding(root, current)) {
                     busy = false;
                     showDecisionSheet("Source export complete", result.changed
@@ -486,13 +594,23 @@ public final class MainActivity extends Activity {
         busy = true;
         IO.execute(() -> {
             try {
-                SafSelectTarget target = null;
+                SelectStorage.External target = null;
                 String warning = null;
                 if (current != null && current.sourceTree != null) {
-                    try { current.requireCurrent(this); target = new SafSelectTarget(getContentResolver(), current.sourceTree); }
+                    try {
+                        current.requireCurrent(this);
+                        BackupTargetRouter routed = new BackupTargetRouter(this, current,
+                                BackupPolicy.load(this, root), true);
+                        target = routed;
+                        if (!routed.sourceAvailable()) warning = "Source unavailable; app backups remain available.";
+                    }
                     catch (IOException unavailable) { warning = "Source backups unavailable. Reconnect source to view them."; }
                 }
                 List<SelectStorage.BackupRef> backups = new SelectStorage(root).listAllBackups(target);
+                if (target instanceof BackupTargetRouter
+                        && ((BackupTargetRouter) target).unavailableHistoryCount() > 0)
+                    warning = (warning == null ? "" : warning + " ")
+                            + "Some older backup folders are unavailable; reconnect them in Settings.";
                 String unavailable = warning;
                 runOnUiThread(() -> { if (!sameBinding(root, current)) return;
                     busy = false;
@@ -500,7 +618,8 @@ public final class MainActivity extends Activity {
                     String[] labels = new String[backups.size()];
                     for (int i = 0; i < backups.size(); i++) {
                         SelectStorage.BackupRef ref = backups.get(i);
-                        labels[i] = (ref.origin == SelectStorage.BackupRef.Origin.SOURCE ? "Source" : "Private")
+                        labels[i] = (ref.origin == SelectStorage.BackupRef.Origin.SOURCE
+                                ? ref.storeLabel : "App working undo/recovery")
                                 + " · " + java.text.DateFormat.getDateTimeInstance().format(new Date(ref.createdAt))
                                 + " · " + ref.byteCount + " bytes";
                     }
@@ -509,7 +628,8 @@ public final class MainActivity extends Activity {
                         SelectStorage.BackupRef ref = backups.get(i);
                         actions[i] = () -> chooseRestore(ref);
                     }
-                    showActionSheet(unavailable == null ? "Verified backups" : "Private backups; reconnect source", labels, actions);
+                    showActionSheet(unavailable == null ? "Verified backups · source preimages and working undo"
+                            : "Available backups; reconnect source", labels, actions);
                 });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
                 busy = false; showStatus("Backups unavailable: " + error.getMessage());
@@ -530,7 +650,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             SelectStorage.CommitResult result;
             try {
-                SafSelectTarget target = requireReady(root, current, false);
+                SelectStorage.External target = requireReady(root, current, false);
                 SelectStorage storage = new SelectStorage(root);
                 result = storage.restoreLoadOnly(target, ref, storage.readWorking().sha256, retention());
             } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(root, current)) {
@@ -556,7 +676,7 @@ public final class MainActivity extends Activity {
         busy = true;
         IO.execute(() -> {
             try {
-                SafSelectTarget target = requireReady(root, current, true);
+                SelectStorage.External target = requireReady(root, current, true);
                 SelectStorage storage = new SelectStorage(root, openSource(current));
                 String workingHash = storage.readWorking().sha256;
                 SelectStorage.ExportPlan plan = storage.planRestoreSource(target, ref);
@@ -590,7 +710,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             SelectStorage.RestoreResult result;
             try {
-                SafSelectTarget target = requireReady(root, current, true);
+                SelectStorage.External target = requireReady(root, current, true);
                 result = new SelectStorage(root).restoreSourceAndWorking(
                         target, ref, workingHash, plan, keep);
             } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(root, current)) {
@@ -615,7 +735,10 @@ public final class MainActivity extends Activity {
     }
 
     private void showOrientationSetting() {
-        showActionSheet("Screen orientation", new String[]{"Landscape", "Portrait"},
+        boolean portrait = "portrait".equals(getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_ORIENTATION, "landscape"));
+        showActionSheet("Screen orientation", new String[]{choiceLabel(!portrait, "Landscape"),
+                        choiceLabel(portrait, "Portrait")},
                 new Runnable[]{() -> chooseOrientation("landscape"), () -> chooseOrientation("portrait")});
     }
 
@@ -627,13 +750,53 @@ public final class MainActivity extends Activity {
 
     private void showCompactMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add("Switch folder").setOnMenuItemClickListener(item -> { pickFolder(); return true; });
-        menu.getMenu().add("Manage roster & settings").setOnMenuItemClickListener(item -> {
-            anchor.post(() -> showActionSheet("Manage", new String[]{"Roster actions", "Settings"},
-                    new Runnable[]{this::showRosterActions, this::showSettings}));
-            return true;
+        menu.getMenu().add("Roster actions").setOnMenuItemClickListener(item -> {
+            anchor.post(this::showRosterActions); return true;
         });
         menu.show();
+    }
+
+    private static String choiceLabel(boolean selected, String value) {
+        return (selected ? "✓ Current · " : "○ ") + value;
+    }
+
+    private String sourceFolderLabel() {
+        if (binding == null || binding.sourceTree == null) return "Not selected";
+        if (binding.displayName != null && !binding.displayName.trim().isEmpty()) return binding.displayName;
+        try {
+            String id = DocumentsContract.getTreeDocumentId(binding.sourceTree);
+            int separator = Math.max(id.lastIndexOf('/'), id.lastIndexOf(':'));
+            String name = id.substring(separator + 1);
+            return name.isEmpty() || name.matches("[0-9a-fA-F-]{20,}") ? "Linked folder" : name;
+        } catch (RuntimeException invalid) { return "Linked folder"; }
+    }
+
+    private String retentionLabel() {
+        String value = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_RETENTION, "");
+        return value.isEmpty() ? "Unlimited" : value;
+    }
+
+    private void updateExportAvailability() {
+        if (exportButton == null) return;
+        boolean writable = false;
+        if (binding != null && binding.sourceTree != null) {
+            try { SafSelectTarget.requireGrant(getContentResolver(), binding.sourceTree, true); writable = true; }
+            catch (IOException ignored) { }
+        }
+        boolean ready = library != null && binding != null && binding.sourceTree != null
+                && sourceSelectExists && writable && RosterStore.selectFile(library).isFile();
+        exportButton.setEnabled(ready);
+        String reason = library == null ? "Choose a source folder in Settings"
+                : binding == null || binding.sourceTree == null ? "Reconnect source folder in Settings"
+                : !sourceSelectExists ? "Linked source has no data/select.def to overwrite"
+                : !writable ? "Reconnect source with write access in Settings"
+                : "Create a working roster before exporting";
+        exportButton.setContentDescription(ready ? "Export select.def to the linked source folder"
+                : "Export unavailable. " + reason + ".");
+        if (exportHint != null) {
+            exportHint.setVisibility(ready ? View.GONE : View.VISIBLE);
+            exportHint.setText("Export unavailable · " + reason + ".");
+        }
     }
 
     private void showStatus(String message) {
@@ -648,12 +811,12 @@ public final class MainActivity extends Activity {
                 || new File(folder, "pending-restore.properties").isFile();
     }
 
-    private SafSelectTarget requireReady(File root, LibraryBinding current, boolean needSource) throws IOException {
-        SafSelectTarget target = null;
+    private SelectStorage.External requireReady(File root, LibraryBinding current, boolean needSource) throws IOException {
+        SelectStorage.External target = null;
         if (current != null && current.sourceTree != null) {
             current.requireCurrent(this);
             if (needSource) SafSelectTarget.requireGrant(getContentResolver(), current.sourceTree, true);
-            try { target = new SafSelectTarget(getContentResolver(), current.sourceTree); }
+            try { target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root), !needSource); }
             catch (IOException inaccessible) { if (needSource || hasPending(root)) throw new IOException(
                     "Source unavailable. Reconnect its folder; your working roster and backups are retained. " + inaccessible.getMessage(), inaccessible); }
         }
@@ -695,7 +858,8 @@ public final class MainActivity extends Activity {
             try {
                 if (current == null || current.sourceTree == null) throw new IOException("Reconnect the original source folder first.");
                 current.requireCurrent(this);
-                SafSelectTarget target = new SafSelectTarget(getContentResolver(), current.sourceTree);
+                SelectStorage.External target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root));
+                String destination = target.identity();
                 SelectStorage storage = new SelectStorage(root);
                 String export = storage.inspectPending(target);
                 String restore = export.equals("RECOVERY_REQUIRED") || export.equals("OTHER_TARGET")
@@ -704,7 +868,7 @@ public final class MainActivity extends Activity {
                     busy = false;
                     if (export.equals("RECOVERY_REQUIRED")) {
                         showDecisionSheet("Repair interrupted export",
-                                "Destination: " + target.identity() + "\nRestore its exact pre-write bytes from the private recovery copy? This overwrites the current destination.",
+                                "Destination: " + destination + "\nRestore its exact pre-write bytes from the private recovery copy? This overwrites the current destination.",
                                 "Restore preimage", () -> executeRecovery(root, current, false));
                     } else if (export.equals("OTHER_TARGET"))
                         showStatus("Pending export belongs to a different source folder. Reconnect the original folder first.");
@@ -716,7 +880,7 @@ public final class MainActivity extends Activity {
                         showStatus("Recovery is bound to a different source folder. Reconnect the original folder.");
                     else if (restore.equals("RECOVERY_REQUIRED")) {
                         showDecisionSheet("Stop interrupted restore safely",
-                                "The source and private roster no longer match this pending restore. Preserve and verify both current versions as separate backups, then stop this restore? No roster will be overwritten. Destination: " + target.identity(),
+                                "The source and private roster no longer match this pending restore. Preserve and verify both current versions as separate backups, then stop this restore? No roster will be overwritten. Destination: " + destination,
                                 "Preserve both and stop", () -> abandonRecovery(root, current));
                     }
                     else { recoveryIssue = null; showStatus("No interrupted source operation remains."); }
@@ -733,7 +897,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 current.requireCurrent(this);
-                SafSelectTarget target = new SafSelectTarget(getContentResolver(), current.sourceTree);
+                SelectStorage.External target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root));
                 SelectStorage storage = new SelectStorage(root);
                 if (finishLocal) storage.completePendingRestore(target);
                 else storage.restorePendingPreimage(target);
@@ -760,7 +924,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 current.requireCurrent(this);
-                SafSelectTarget target = new SafSelectTarget(getContentResolver(), current.sourceTree);
+                SelectStorage.External target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root));
                 SelectStorage.AbandonResult result = new SelectStorage(root).abandonPendingRestore(target);
                 runOnUiThread(() -> { if (sameBinding(root, current)) {
                     busy = false; recoveryIssue = null;
@@ -794,10 +958,12 @@ public final class MainActivity extends Activity {
         if (active == null ? library == null : active.equals(library)) {
             if (active != null && catalog == null) refreshCatalog();
             if (active != null) checkRecoveryAtStartup(active, binding);
+            updateExportAvailability();
             return;
         }
         library = active;
         catalog = null;
+        sourceSelectExists = false;
         selected = null;
         restoreSelection = null;
         previewKey = null;
@@ -808,6 +974,7 @@ public final class MainActivity extends Activity {
         previewLoading = false;
         renderList();
         showStatus(summary());
+        updateExportAvailability();
         refreshCatalog();
         if (active != null) checkRecoveryAtStartup(active, binding);
     }
@@ -861,10 +1028,63 @@ public final class MainActivity extends Activity {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
             if (request == RECONNECT_TREE) reconnectLibrary = null;
+            if (request == PICK_BACKUP_TREE) { backupPickerLibrary = null; backupPickerBinding = null; }
             return;
         }
         Uri uri = data.getData();
-        if (request == PICK_TREE) {
+        if (request == PICK_BACKUP_TREE) {
+            File expected = backupPickerLibrary;
+            LibraryBinding expectedBinding = backupPickerBinding;
+            backupPickerLibrary = null; backupPickerBinding = null;
+            if (expected == null || !sameBinding(expected, expectedBinding)) return;
+            int flags = persistGrant(uri, data);
+            busy = true;
+            IO.execute(() -> {
+                try {
+                    if ((flags & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                            != (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                        throw new IOException("Custom backup folder needs lasting read and write access");
+                    Uri folder = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri));
+                    String name;
+                    try (Cursor cursor = getContentResolver().query(folder,
+                            new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                                    DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null)) {
+                        if (cursor == null || !cursor.moveToFirst()
+                                || !DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(1)))
+                            throw new IOException("Custom backup selection is not an accessible folder");
+                        name = cursor.getString(0);
+                    }
+                    if (name == null || name.trim().isEmpty()) throw new IOException("Backup folder has no display name");
+                    String probeName = "ikemen-write-check-" + UUID.randomUUID() + ".tmp";
+                    Uri probe = DocumentsContract.createDocument(getContentResolver(), folder,
+                            "application/octet-stream", probeName);
+                    if (probe == null) throw new IOException("Backup provider could not create a file");
+                    try {
+                        try (Cursor cursor = getContentResolver().query(probe,
+                                new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                            if (cursor == null || !cursor.moveToFirst()) throw new IOException("Backup test file is unavailable");
+                            ManagedBackupFormat.requireExactName(probeName, cursor.getString(0));
+                        }
+                    } finally {
+                        if (!DocumentsContract.deleteDocument(getContentResolver(), probe))
+                            throw new IOException("Backup provider could not remove its test file; prior setting retained");
+                    }
+                    if (!sameBinding(expected, expectedBinding)) throw new IOException("Source folder changed during backup selection");
+                    if (hasPending(expected)) throw new IOException("Resolve pending source recovery before changing the backup location");
+                    BackupPolicy chosen = BackupPolicy.choose(this, expected, BackupPolicy.Kind.CUSTOM, uri, name);
+                    runOnUiThread(() -> { if (sameBinding(expected, expectedBinding)) {
+                        busy = false; showStatus("Verified source preimage backups: custom folder " + chosen.customName + ".");
+                    } });
+                } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
+                    busy = false; showStatus("Custom backup setting unchanged: " + error.getMessage());
+                } }); }
+            });
+        } else if (request == PICK_TREE) {
+            if (library != null && binding != null && uri.equals(binding.sourceTree)) {
+                reconnectLibrary = library;
+                reconnectPickedSource(uri, data);
+                return;
+            }
             int flags = persistGrant(uri, data);
             busy = true;
             showStatus("Linking source folder…");
@@ -884,12 +1104,14 @@ public final class MainActivity extends Activity {
                     try (FileOutputStream output = new FileOutputStream(new File(workData, "select.def"))) {
                         output.write(roster); output.getFD().sync();
                     }
-                    LibraryBinding linked = LibraryBinding.bindSource(this, workspace, uri, flags);
+                    LibraryBinding linked = LibraryBinding.bindSource(this, workspace, uri, flags, source.name());
                     if (!getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_PATH, workspace.getAbsolutePath()).commit())
                         throw new IOException("Could not remember selected source folder");
                     runOnUiThread(() -> { if (isDestroyed()) return;
                         library = workspace; binding = linked; catalog = scanned; catalogEpoch++; selected = null; busy = false;
+                        sourceSelectExists = sourceSelect != null;
                         syncActiveLibrary(workspace.getAbsolutePath()); renderList();
+                        updateExportAvailability();
                         showStatus((flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
                                 ? "Source linked directly. Character and stage files stay in place."
                                 : "Source linked for browsing. Export needs write permission.");
@@ -897,34 +1119,7 @@ public final class MainActivity extends Activity {
                 } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) { busy = false; showStatus("Could not link source folder: " + error.getMessage()); } }); }
             });
         } else if (request == RECONNECT_TREE) {
-            File expected = reconnectLibrary;
-            reconnectLibrary = null;
-            if (expected == null || !expected.equals(library)) return;
-            try {
-                LibraryBinding remembered = LibraryBinding.load(this, expected);
-                if (!LibraryBinding.acceptsReconnect(
-                        remembered.sourceTree == null ? null : remembered.sourceTree.toString(), uri.toString())) {
-                    showStatus("This is a different source folder. Reconnect the original folder, or use Switch folder to select another library.");
-                    return;
-                }
-            } catch (IOException error) { showStatus("Could not check the remembered source: " + error.getMessage()); return; }
-            int flags = persistGrant(uri, data);
-            busy = true;
-            IO.execute(() -> {
-                try {
-                    if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0)
-                        throw new IOException("Choose a folder that grants lasting read access");
-                    LibraryFiles.Node source = new SafLibraryFiles(getContentResolver(), uri).root();
-                    LibraryScanner.Catalog scanned = LibraryScanner.scan(source,
-                            new SelectStorage(expected).readWorking().bytes);
-                    LibraryBinding restored = LibraryBinding.bindSource(this, expected, uri, flags);
-                    runOnUiThread(() -> { if (!isDestroyed() && expected.equals(library)) {
-                        binding = restored; catalog = scanned; catalogEpoch++; selected = selected == null ? null : find(scanned, selected);
-                        busy = false; renderList(); showStatus("Source folder reconnected directly.");
-                        checkRecoveryAtStartup(expected, restored);
-                    } });
-                } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) { busy = false; showStatus("Reconnect failed; working roster preserved: " + error.getMessage()); } }); }
-            });
+            reconnectPickedSource(uri, data);
         } else if (request == EXPORT_SELECT) {
             busy = true;
             showStatus("Exporting select.def…");
@@ -939,6 +1134,42 @@ public final class MainActivity extends Activity {
                 } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) { busy = false; showStatus("Export failed: " + error.getMessage()); } }); }
             });
         }
+    }
+
+    private void reconnectPickedSource(Uri uri, Intent data) {
+        File expected = reconnectLibrary;
+        reconnectLibrary = null;
+        if (expected == null || !expected.equals(library)) return;
+        try {
+            LibraryBinding remembered = LibraryBinding.load(this, expected);
+            if (!LibraryBinding.acceptsReconnect(
+                    remembered.sourceTree == null ? null : remembered.sourceTree.toString(), uri.toString())) {
+                showStatus("This is a different source folder. Use Settings > Source folder to switch libraries.");
+                return;
+            }
+        } catch (IOException error) { showStatus("Could not check the remembered source: " + error.getMessage()); return; }
+        int flags = persistGrant(uri, data);
+        busy = true;
+        IO.execute(() -> {
+            try {
+                if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0)
+                    throw new IOException("Choose a folder that grants lasting read access");
+                LibraryFiles.Node source = new SafLibraryFiles(getContentResolver(), uri).root();
+                LibraryScanner.Catalog scanned = LibraryScanner.scan(source,
+                        new SelectStorage(expected).readWorking().bytes);
+                LibraryFiles.Node sourceData = LibraryFiles.child(source, "data");
+                boolean hasSourceSelect = sourceData != null && LibraryFiles.child(sourceData, "select.def") != null;
+                LibraryBinding restored = LibraryBinding.bindSource(this, expected, uri, flags, source.name());
+                runOnUiThread(() -> { if (!isDestroyed() && expected.equals(library)) {
+                    binding = restored; catalog = scanned; catalogEpoch++; selected = selected == null ? null : find(scanned, selected);
+                    sourceSelectExists = hasSourceSelect;
+                    busy = false; renderList(); updateExportAvailability(); showStatus("Source folder reconnected directly.");
+                    checkRecoveryAtStartup(expected, restored);
+                } });
+            } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
+                busy = false; showStatus("Reconnect failed; working roster preserved: " + error.getMessage());
+            } }); }
+        });
     }
 
     private String summary() {
@@ -975,18 +1206,22 @@ public final class MainActivity extends Activity {
         LibraryBinding currentBinding = binding;
         IO.execute(() -> {
             try {
-                LibraryScanner.Catalog scanned = scanWorking(current, currentBinding);
+                LibraryFiles.Node source = openSource(currentBinding);
+                LibraryFiles.Node sourceData = LibraryFiles.child(source, "data");
+                boolean hasSourceSelect = sourceData != null && LibraryFiles.child(sourceData, "select.def") != null;
+                LibraryScanner.Catalog scanned = LibraryScanner.scan(source, new SelectStorage(current).readWorking().bytes);
                 runOnUiThread(() -> { if (sameBinding(current, currentBinding)) {
                     catalog = scanned; catalogEpoch++;
+                    sourceSelectExists = hasSourceSelect;
                     previewKey = null; previewBitmap = null; previewReason = null;
                     if (restoreSelection != null) {
                         selected = findByKey(scanned, restoreSelection);
                         restoreSelection = null;
                     } else if (selected != null) selected = find(scanned, selected);
-                    renderList(); showStatus(summary());
+                    renderList(); updateExportAvailability(); showStatus(summary());
                 } });
             } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, currentBinding)) {
-                catalog = null; selected = null; renderList();
+                catalog = null; selected = null; sourceSelectExists = false; renderList(); updateExportAvailability();
                 showStatus("Source scan unavailable: " + error.getMessage());
             } }); }
         });
