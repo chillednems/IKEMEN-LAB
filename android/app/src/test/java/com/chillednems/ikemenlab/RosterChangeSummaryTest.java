@@ -22,4 +22,13 @@ public final class RosterChangeSummaryTest {
         assertEquals(1, summary.added);
         assertEquals(1, summary.removed);
     }
+    @Test public void duplicateReferenceIsEnabledWhenAnyEntryIsActive() throws Exception {
+        byte[] before = "[Characters]\nHero/Hero.def\n;Hero/Hero.def\n".getBytes(StandardCharsets.UTF_8);
+        byte[] after = "[Characters]\n;Hero/Hero.def\n;Hero/Hero.def\n".getBytes(StandardCharsets.UTF_8);
+        RosterChangeSummary summary = RosterChangeSummary.compare(temp.getRoot(), before, after);
+        assertEquals(0, summary.enabled);
+        assertEquals(1, summary.disabled);
+        assertEquals(0, summary.added);
+        assertEquals(0, summary.removed);
+    }
 }

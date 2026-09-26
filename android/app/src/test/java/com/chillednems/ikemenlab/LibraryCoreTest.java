@@ -58,6 +58,18 @@ public final class LibraryCoreTest {
         editor.setEnabled("characters", "KFM/KFM.def", false);
         assertEquals("[Characters]\n;KFM/KFM.def\nKFM/alternate.def\n", editor.content());
     }
+    @Test public void editingRealEntryDoesNotUncommentInstructionalExample() {
+        String examples = "[Characters]\r\n;This example loads chars/sample/alt.def:\r\n"
+                + ";    sample/alt.def, stages/demo.def\r\n;\r\n;Insert your characters below.\r\n";
+        String original = examples + "sample/sample.def\r\n;Missing (Hero)/Missing (Hero).def\r\n";
+        SelectDefEditor editor = new SelectDefEditor(original);
+        assertNull(editor.isEnabled("characters", "sample/alt.def"));
+        assertEquals(Boolean.FALSE, editor.isEnabled("characters", "Missing (Hero)/Missing (Hero).def"));
+        editor.setEnabled("characters", "sample/sample.def", false);
+        assertEquals(examples + ";sample/sample.def\r\n;Missing (Hero)/Missing (Hero).def\r\n", editor.content());
+        editor.setEnabledExact("characters", "Missing (Hero)/Missing (Hero).def", true);
+        assertEquals(examples + ";sample/sample.def\r\nMissing (Hero)/Missing (Hero).def\r\n", editor.content());
+    }
 
     @Test public void loneCrRosterIsEditedWithoutDuplicateSection() {
         String original = "[Characters]\rKFM/KFM.def\r[Options]\rkeep=1\r";

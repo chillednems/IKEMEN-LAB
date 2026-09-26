@@ -31,7 +31,8 @@ final class RosterChangeSummary {
     private static Map<String, Boolean> entries(File root, byte[] bytes) throws IOException {
         Map<String, Boolean> result = new HashMap<>();
         for (RosterDiagnostics.Entry entry : RosterDiagnostics.entries(root, bytes))
-            result.put(entry.section + "|" + entry.rawReference.toLowerCase(Locale.ROOT), entry.active);
+            result.merge(entry.section + "|" + entry.rawReference.toLowerCase(Locale.ROOT),
+                    entry.active, (earlier, later) -> earlier || later);
         return result;
     }
 

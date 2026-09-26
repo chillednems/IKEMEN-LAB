@@ -30,26 +30,10 @@ public final class SelectDefEditor {
         if (start < content.length()) lines.add(new Line(content.substring(start), ""));
     }
 
-    private static String sectionOf(String line) {
-        String value = line.trim();
-        return value.startsWith("[") && value.indexOf(']') > 1
-                ? value.substring(1, value.indexOf(']')).trim().toLowerCase(Locale.ROOT) : null;
-    }
-
-    private static String candidate(String line) {
-        String value = line.trim();
-        if (value.startsWith(";")) value = value.substring(1).trim();
-        if (value.isEmpty() || value.startsWith(";") || value.startsWith("[") || value.startsWith("#")) return null;
-        int comma = value.indexOf(',');
-        if (comma >= 0) value = value.substring(0, comma);
-        int semicolon = value.indexOf(';');
-        if (semicolon >= 0) value = value.substring(0, semicolon);
-        return value.trim().replace('\\', '/').toLowerCase(Locale.ROOT);
-    }
-
     private static boolean matches(String section, String actual, String wanted) {
         if (actual == null) return false;
-        if (actual.startsWith("/") || actual.equals("..") || actual.startsWith("../") || actual.contains("/../") || actual.endsWith("/..")) return false;
+        if (RosterLineClassifier.isUnsafe(actual)) return false;
+        actual = actual.toLowerCase(Locale.ROOT);
         wanted = wanted.replace('\\', '/').toLowerCase(Locale.ROOT);
         if (actual.equals(wanted)) return true;
         if (section.equals("characters")) {
@@ -66,15 +50,15 @@ public final class SelectDefEditor {
 
     /** null means not present; otherwise whether at least one matching entry is active. */
     public Boolean isEnabled(String section, String relativeRef) {
-        String current = "";
+        RosterLineClassifier classifier = new RosterLineClassifier();
         boolean found = false;
         boolean active = false;
         for (Line line : lines) {
-            String next = sectionOf(line.text);
-            if (next != null) current = next;
-            else if (current.equals(section.toLowerCase(Locale.ROOT)) && matches(current, candidate(line.text), relativeRef)) {
+            RosterLineClassifier.Candidate candidate = classifier.accept(line.text);
+            if (candidate != null && candidate.section.equals(section.toLowerCase(Locale.ROOT))
+                    && matches(candidate.section, candidate.reference, relativeRef)) {
                 found = true;
-                active |= !line.text.trim().startsWith(";");
+                active |= candidate.active;
             }
         }
         return found ? active : null;
@@ -95,18 +79,19 @@ public final class SelectDefEditor {
         if (!wanted.equals("characters") && !wanted.equals("extrastages")) throw new IllegalArgumentException("Invalid roster section");
         if (relativeRef.trim().isEmpty() || relativeRef.startsWith("/") || relativeRef.contains("..") || relativeRef.contains("\\"))
             throw new IllegalArgumentException("Invalid relative reference");
-        String current = "";
+        RosterLineClassifier classifier = new RosterLineClassifier();
         int insert = -1;
         boolean found = false;
         for (int i = 0; i < lines.size(); i++) {
             Line line = lines.get(i);
-            String next = sectionOf(line.text);
-            if (next != null) {
-                if (current.equals(wanted) && insert < 0) insert = i;
-                current = next;
-            } else if (current.equals(wanted)) {
-                String actual = candidate(line.text);
-                if (exact ? actual != null && actual.equals(relativeRef.replace('\\', '/').toLowerCase(Locale.ROOT))
+            String before = classifier.section();
+            RosterLineClassifier.Candidate candidate = classifier.accept(line.text);
+            String current = classifier.section();
+            if (!before.equals(current)) {
+                if (before.equals(wanted) && insert < 0) insert = i;
+            } else if (current.equals(wanted) && candidate != null) {
+                String actual = candidate.reference;
+                if (exact ? actual.equalsIgnoreCase(relativeRef.replace('\\', '/'))
                         : matches(current, actual, relativeRef)) {
                     found = true;
                     if (enabled && line.text.trim().startsWith(";")) {
@@ -121,7 +106,7 @@ public final class SelectDefEditor {
             }
         }
         if (found || !enabled) return;
-        if (insert < 0 && current.equals(wanted)) insert = lines.size();
+        if (insert < 0 && classifier.section().equals(wanted)) insert = lines.size();
         if (insert < 0) {
             if (!lines.isEmpty() && lines.get(lines.size() - 1).ending.isEmpty()) lines.add(new Line("", newline));
             lines.add(new Line("[" + (wanted.equals("characters") ? "Characters" : "ExtraStages") + "]", newline));

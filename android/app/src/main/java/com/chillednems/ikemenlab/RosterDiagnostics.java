@@ -52,28 +52,17 @@ public final class RosterDiagnostics {
             text = new String(bytes, offset, bytes.length - offset, StandardCharsets.ISO_8859_1);
         }
         List<Entry> entries = new ArrayList<>();
-        String section = "";
+        RosterLineClassifier classifier = new RosterLineClassifier();
         String[] lines = text.split("\r\n|\r|\n", -1);
         for (int i = 0; i < lines.length; i++) {
-            String line = lines[i].trim();
-            if (line.startsWith("[") && line.contains("]")) {
-                section = line.substring(1, line.indexOf(']')).trim().toLowerCase(Locale.ROOT);
-                continue;
-            }
-            if (!section.equals("characters") && !section.equals("extrastages")) continue;
-            boolean active = !line.startsWith(";");
-            if (!active) line = line.substring(1).trim();
-            if (line.isEmpty() || line.startsWith(";") || line.startsWith("#")) continue;
-            String raw = line.split("[,;]", 2)[0].trim();
-            if (raw.isEmpty() || raw.indexOf('=') >= 0 || raw.indexOf('\t') >= 0) continue;
-            if (raw.indexOf(' ') >= 0 && raw.indexOf('/') < 0 && !raw.toLowerCase(Locale.ROOT).endsWith(".def")) continue;
-            String ref = raw.replace('\\', '/');
+            RosterLineClassifier.Candidate candidateLine = classifier.accept(lines[i]);
+            if (candidateLine == null) continue;
+            String section = candidateLine.section;
+            String raw = candidateLine.reference;
+            boolean active = candidateLine.active;
+            String ref = raw;
             String lower = ref.toLowerCase(Locale.ROOT);
-            if (lower.equals("randomselect") || lower.equals("random") || lower.startsWith("randomselect/")) continue;
-            // A disabled single-word comment is indistinguishable from prose. Require path syntax.
-            if (!active && ref.indexOf('/') < 0 && !lower.endsWith(".def")) continue;
-            if (!ref.matches("[A-Za-z0-9_ ./\\-]+")) continue;
-            if (ref.startsWith("/") || ref.contains("..") || ref.startsWith("."))
+            if (RosterLineClassifier.isUnsafe(ref))
                 { entries.add(new Entry(section, raw, "Invalid relative reference", i + 1, active, null)); continue; }
             File base = childIgnoreCase(root, section.equals("characters") ? "chars" : "stages");
             String relative = section.equals("extrastages") && lower.startsWith("stages/") ? ref.substring(7) : ref;
