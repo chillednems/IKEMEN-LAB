@@ -4,6 +4,8 @@ IKEMEN Lab lets you browse an unpacked IKEMEN or MUGEN library, preview supporte
 
 **Release status:** The newest [published Android prerelease is 0.5.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.5.0). This Android branch contains an **unreleased 0.6.0 candidate** under review. Its instructions below describe this branch's current app, not the 0.5.0 APK. [The 0.5.0 README](https://github.com/chillednems/IKEMEN-LAB/blob/android-v0.5.0/android/README.md) explains the older app, which copied a selected library into private storage. Earlier [0.1.0–0.5.0 screenshots](screenshots/README.md) use public-safe sample content. `main` has not received the Android app.
 
+The [0.6.0 candidate screenshots](screenshots/README.md#060-development-candidate) show the visible Export action, current Settings values, and a character preview with self-created sample content.
+
 ## Start using the 0.6.0 candidate
 
 1. Open **Settings → Source folder** and choose the unpacked library root containing `chars/` and `stages/`. Grant lasting read access, and write access if you want to export to its existing `data/select.def`. The app remembers this folder across launches. It reads character and stage files **in place**; it does not duplicate those folders in app storage.

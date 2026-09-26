@@ -35,3 +35,19 @@ Choose neutral, portrait, or combined character artwork. The screenshot shows th
 ![Composed two-layer stage scene in the details pane](android-v0.5.0-stage-scene.png)
 
 A supported 2D stage shows a static composition of two background layers.
+
+## 0.6.0 development candidate
+
+These actual-app captures use a self-created demonstration library. They were captured from signed candidate `c0b38d9`; the later recovery-only correction does not change these screens. Version 0.6.0 has not been published.
+
+![Visible Export action and no-change review in landscape](android-v0.6.0-landscape-export.png)
+
+The main screen keeps **Export** visible, and the review explains the linked destination, change counts, and backup plan.
+
+![Settings with current source and backup location](android-v0.6.0-settings.png)
+
+Settings shows the selected source, preview mode, orientation, backup destination, retention, and no-change warning.
+
+![Selected character preview](android-v0.6.0-selected-preview.png)
+
+Character artwork remains below the name, author, and reference while the direct source folder is linked.
