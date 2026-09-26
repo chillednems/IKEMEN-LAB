@@ -10,11 +10,15 @@ public final class CharacterPreview {
     private CharacterPreview() {}
 
     public static PreviewFrame render(File defFile, Mode mode, int width, int height) throws IOException {
+        return render(LibraryFiles.child(LibraryFiles.local(defFile.getParentFile()), defFile.getName()), mode, width, height);
+    }
+
+    public static PreviewFrame render(LibraryFiles.Node defFile, Mode mode, int width, int height) throws IOException {
         if (width < 1 || height < 1 || (long) width * height > 1_000_000) throw new IOException("Preview viewport exceeds limit");
         PreviewMetadata def = PreviewMetadata.parse(LibraryScanner.readText(defFile));
         PreviewMetadata.Section files = def.first("files");
         String sffPath = files.get("sprite", files.get("spr", ""));
-        File sff = PreviewMetadata.resolve(defFile, sffPath);
+        LibraryFiles.Node sff = PreviewMetadata.resolve(defFile, sffPath);
         int[] canvas = new int[width * height];
         Arrays.fill(canvas, 0xff151923);
         try (PreviewSff archive = new PreviewSff(sff)) {
@@ -30,7 +34,7 @@ public final class CharacterPreview {
                 if (portrait == null && mode == Mode.PORTRAIT) throw new IOException("Character portrait unavailable", last);
             }
             if (mode != Mode.PORTRAIT) {
-                File air = PreviewMetadata.resolve(defFile, files.get("anim", ""));
+                LibraryFiles.Node air = PreviewMetadata.resolve(defFile, files.get("anim", ""));
                 neutralFrame = PreviewMetadata.actionFirstFrame(PreviewMetadata.parse(LibraryScanner.readText(air)), 0);
                 neutral = archive.sprite(neutralFrame[0], neutralFrame[1]);
                 if (mode == Mode.NEUTRAL_OVER_PORTRAIT && portrait != null)

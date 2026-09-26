@@ -12,8 +12,11 @@ import java.util.*;
 public final class SelectStorage {
     public static final int MAX_BYTES = 2 * 1024 * 1024;
     private final File root, select, versions;
-    public SelectStorage(File root) {
+    private final LibraryFiles.Node diagnosticRoot;
+    public SelectStorage(File root) { this(root, LibraryFiles.local(root)); }
+    public SelectStorage(File root, LibraryFiles.Node diagnosticRoot) {
         this.root = root;
+        this.diagnosticRoot = diagnosticRoot;
         this.select = RosterStore.selectFile(root);
         this.versions = new File(select.getParentFile(), "select-backups");
     }
@@ -65,10 +68,10 @@ public final class SelectStorage {
         public final byte[] replacement;
         public final BackupRef selectedBackup;
         public final List<RosterDiagnostics.Warning> missingWarnings;
-        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, File root) throws IOException {
+        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, LibraryFiles.Node root) throws IOException {
             this(targetIdentity, replacement, source, root, null);
         }
-        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, File root, BackupRef selectedBackup) throws IOException {
+        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, LibraryFiles.Node root, BackupRef selectedBackup) throws IOException {
             this.targetIdentity = targetIdentity; this.replacement = replacement.clone();
             this.workingHash = hash(replacement); this.sourceHash = hash(source);
             this.selectedBackup = selectedBackup;
@@ -157,7 +160,7 @@ public final class SelectStorage {
     public ExportPlan planExport(External target, String expectedWorkingHash) throws IOException {
         Snapshot working = readWorking();
         if (!working.sha256.equals(expectedWorkingHash)) throw new IOException("Working select.def changed; refresh preview");
-        return new ExportPlan(target.identity(), working.bytes, checked(target.read()), root);
+        return new ExportPlan(target.identity(), working.bytes, checked(target.read()), diagnosticRoot);
     }
     /** Restore preview uses an immutable version as source; the working copy is handled separately. */
     public ExportPlan planRestoreSource(External target, String versionId) throws IOException {
@@ -166,7 +169,7 @@ public final class SelectStorage {
         throw new IOException("Selected backup is missing");
     }
     public ExportPlan planRestoreSource(External target, BackupRef ref) throws IOException {
-        return new ExportPlan(target.identity(), readBackup(target, ref), checked(target.read()), root, ref);
+        return new ExportPlan(target.identity(), readBackup(target, ref), checked(target.read()), diagnosticRoot, ref);
     }
     public static final class RestoreResult {
         public final ExportResult source;

@@ -89,6 +89,12 @@ final class PreviewMetadata {
         if (!current.isFile()) throw new IOException("Preview asset is not a file");
         return current;
     }
+    static LibraryFiles.Node resolve(LibraryFiles.Node def, String path) throws IOException {
+        path = clean(path).replace('\\', '/');
+        LibraryFiles.Node result = LibraryFiles.resolve(def.parent(), path);
+        if (result == null || result.directory()) throw new IOException("Preview asset is missing: " + path);
+        return result;
+    }
     static int[] actionFirstFrame(PreviewMetadata metadata, int action) throws IOException {
         String wanted = "begin action " + action;
         for (Section section : metadata.sections) if (section.name.replaceAll("\\s+", " ").equals(wanted)) {

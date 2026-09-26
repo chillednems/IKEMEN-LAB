@@ -15,6 +15,9 @@ final class RosterChangeSummary {
     }
 
     static RosterChangeSummary compare(File root, byte[] before, byte[] after) throws IOException {
+        return compare(LibraryFiles.local(root), before, after);
+    }
+    static RosterChangeSummary compare(LibraryFiles.Node root, byte[] before, byte[] after) throws IOException {
         Map<String, Boolean> oldEntries = entries(root, before);
         Map<String, Boolean> newEntries = entries(root, after);
         int enabled = 0, disabled = 0, added = 0, removed = 0;
@@ -28,7 +31,7 @@ final class RosterChangeSummary {
         return new RosterChangeSummary(enabled, disabled, added, removed);
     }
 
-    private static Map<String, Boolean> entries(File root, byte[] bytes) throws IOException {
+    private static Map<String, Boolean> entries(LibraryFiles.Node root, byte[] bytes) throws IOException {
         Map<String, Boolean> result = new HashMap<>();
         for (RosterDiagnostics.Entry entry : RosterDiagnostics.entries(root, bytes))
             result.merge(entry.section + "|" + entry.rawReference.toLowerCase(Locale.ROOT),

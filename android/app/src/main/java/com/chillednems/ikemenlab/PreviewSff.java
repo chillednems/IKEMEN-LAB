@@ -3,7 +3,8 @@ package com.chillednems.ikemenlab;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,7 +17,7 @@ public final class PreviewSff implements Closeable {
     public static final int MAX_PIXELS = 4_000_000;
     private static final int MAX_ENTRIES = 10_000;
     private static final int MAX_COMPRESSED = 16 * 1024 * 1024;
-    private final RandomAccessFile file;
+    private final SeekableByteChannel file;
     private final long size;
     private final int version;
     private final boolean legacyPaletteAlpha;
@@ -41,10 +42,12 @@ public final class PreviewSff implements Closeable {
         boolean samePalette;
     }
 
-    public PreviewSff(File path) throws IOException {
-        file = new RandomAccessFile(path, "r");
+    public PreviewSff(File path) throws IOException { this(LibraryFiles.local(path)); }
+
+    public PreviewSff(LibraryFiles.Node path) throws IOException {
+        file = path.openSeekable();
         try {
-            size = file.length();
+            size = file.size();
             byte[] header = read(0, 64);
             if (!new String(header, 0, 11, java.nio.charset.StandardCharsets.US_ASCII).equals("ElecbyteSpr"))
                 throw new IOException("Invalid SFF signature");
@@ -251,7 +254,15 @@ public final class PreviewSff implements Closeable {
     private boolean within(long at, long length) { return at >= 0 && length >= 0 && at <= size && length <= size - at; }
     private byte[] read(long at, int length) throws IOException {
         if (!within(at, length)) throw new IOException("SFF offset out of bounds");
-        byte[] out = new byte[length]; file.seek(at); file.readFully(out); return out;
+        byte[] out = new byte[length];
+        file.position(at);
+        ByteBuffer destination = ByteBuffer.wrap(out);
+        while (destination.hasRemaining()) {
+            int read = file.read(destination);
+            if (read < 0) throw new IOException("Truncated SFF data");
+            if (read == 0) throw new IOException("SFF provider stopped reading");
+        }
+        return out;
     }
     private static int u16(byte[] d, int a) { return (d[a] & 255) | (d[a + 1] & 255) << 8; }
     private static int s16(byte[] d, int a) { return (short) u16(d, a); }

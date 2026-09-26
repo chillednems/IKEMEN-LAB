@@ -12,10 +12,14 @@ public final class StagePreview {
     private StagePreview() {}
 
     public static PreviewFrame render(File defFile, int width, int height) throws IOException {
+        return render(LibraryFiles.child(LibraryFiles.local(defFile.getParentFile()), defFile.getName()), width, height);
+    }
+
+    public static PreviewFrame render(LibraryFiles.Node defFile, int width, int height) throws IOException {
         if (width < 1 || height < 1 || (long) width * height > 1_000_000) throw new IOException("Preview viewport exceeds limit");
         PreviewMetadata def = PreviewMetadata.parse(LibraryScanner.readText(defFile));
         String spr = def.first("bgdef").get("spr", def.first("files").get("spr", ""));
-        File sffFile = PreviewMetadata.resolve(defFile, spr);
+        LibraryFiles.Node sffFile = PreviewMetadata.resolve(defFile, spr);
         int[] canvas = new int[width * height];
         Arrays.fill(canvas, 0xff202630);
         List<PreviewMetadata.Section> layers = new ArrayList<>();
