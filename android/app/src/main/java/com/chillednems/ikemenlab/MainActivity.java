@@ -982,7 +982,7 @@ public final class MainActivity extends Activity {
                     if (restoreSelection != null) {
                         selected = findByKey(scanned, restoreSelection);
                         restoreSelection = null;
-                    }
+                    } else if (selected != null) selected = find(scanned, selected);
                     renderList(); showStatus(summary());
                 } });
             } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, currentBinding)) {
