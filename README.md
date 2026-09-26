@@ -1,6 +1,6 @@
 # IKEMEN Lab
 
-IKEMEN Lab has separate apps for macOS and Android. The macOS app described below manages content and launches a separately installed IKEMEN GO. The [Android 0.1.0 library preview](android/README.md) imports a copy of an unpacked IKEMEN folder, browses characters and stages, edits a backed-up roster, and exports `select.def`. Android game launching, archive import, screenpack tools, and the macOS browser extension are not in the Android preview. Android supports touch and physical handheld navigation; available sprite preview formats are listed in its README.
+IKEMEN Lab has separate apps for macOS and Android. The macOS app described below manages content and launches a separately installed IKEMEN GO. The [Android library app](android/README.md) imports a copy of an unpacked IKEMEN folder, browses characters and stages, edits a backed-up roster, and exports `select.def`. Android 0.1.0 introduces these library features; 0.2.0 adds supported sprite artwork previews, the Fighter Lab icon, and export and preview handling fixes. Android game launching, archive import, screenpack tools, and the macOS browser extension are not in the Android app. Android supports touch and physical handheld navigation; available sprite preview formats are listed in its README.
 
 A **Mac-native Content Management System (CMS)** for the MUGEN community.
 

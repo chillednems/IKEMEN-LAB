@@ -1,6 +1,11 @@
 # IKEMEN Lab for Android (library preview)
 
-This Android app manages a copied IKEMEN/MUGEN library. It does not include or launch IKEMEN GO. It is intended for landscape handheld use with touch or a built-in controller; Android may show it in another orientation or window size on large displays. Its stable package ID is `com.chillednems.ikemenlab`; the first 0.1.0 prerelease uses version code 2. Updates require a higher version code and the same signing certificate.
+This Android app manages a copied IKEMEN/MUGEN library. It does not include or launch IKEMEN GO. It is intended for landscape handheld use with touch or a built-in controller; Android may show it in another orientation or window size on large displays. Its stable package ID is `com.chillednems.ikemenlab`. The 0.1.0 prerelease has version code 1; this 0.2.0 build has version code 2. Updates require a higher version code and the same signing certificate.
+
+## Android releases
+
+- **0.1.0 (code 1):** First library manager from source commit `c028b52`. Import an unpacked folder through Android's folder picker into a bounded managed copy; browse and search character and stage DEF metadata; enable or disable roster entries with backups and preservation of unrelated `select.def` content; export the roster through Android's document picker; navigate by touch or physical controller. This baseline includes legacy roster byte-preservation and lone-CR line-ending fixes. Some document providers may append `.txt` to an exported `select.def` in this version.
+- **0.2.0 (code 2):** Adds bounded character portrait and stage artwork previews in supported SFF/PNG formats and the approved Fighter Lab launcher icon. Changes the export document type to avoid providers appending `.txt`, moves previews to a separate latest-selection queue so large artwork does not delay library operations, and adds environment-based durable release signing. A provider's final export filename should still be checked after saving. This version is intended to update 0.1.0 when signed with the same release key.
 
 ## Build
 
@@ -12,7 +17,7 @@ Install JDK 17 and Android SDK platform/build tools 36, then from `android/` run
 
 The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. This is a locally signed debug build for testing, not a Play Store or public release artifact. Android 8.0 (API 26) or newer is required. SDK setup and license acceptance are the builder's responsibility.
 
-To build the signed prerelease, set `IKEMEN_RELEASE_STORE_FILE` to an existing **absolute** keystore path and set `IKEMEN_RELEASE_KEY_ALIAS`, `IKEMEN_RELEASE_STORE_PASSWORD`, and `IKEMEN_RELEASE_KEY_PASSWORD` in the build process environment. Run `./gradlew :app:assembleRelease`; missing values or a missing keystore fail the release build. Keep the keystore and credentials outside Git. The result is `app/build/outputs/apk/release/app-release.apk`. Preserve that signing key for updates, and increase `versionCode` for every later release. Existing debug installs use a different certificate: uninstall the debug app once before installing the 0.1.0 release APK. This removes its managed library data, so export any needed `select.def` first.
+To build the signed 0.2.0 APK, set `IKEMEN_RELEASE_STORE_FILE` to an existing **absolute** keystore path and set `IKEMEN_RELEASE_KEY_ALIAS`, `IKEMEN_RELEASE_STORE_PASSWORD`, and `IKEMEN_RELEASE_KEY_PASSWORD` in the build process environment. Run `./gradlew :app:assembleRelease`; missing values or a missing keystore fail the release build. Keep the keystore and credentials outside Git. The result is `app/build/outputs/apk/release/app-release.apk`. Preserve that signing key for updates, and increase `versionCode` for every later release. Existing debug installs use a different certificate: uninstall the debug app once before installing a release APK. This removes its managed library data, so export any needed `select.def` first. A release-signed 0.1.0 installation should upgrade to release-signed 0.2.0 without uninstalling when both use the same certificate.
 
 ## Use
 
