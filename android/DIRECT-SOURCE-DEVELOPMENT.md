@@ -1,6 +1,6 @@
 # Android 0.6.0 development candidate
 
-These changes are under review after the published 0.5.0 prerelease. The published APK still copies a selected library; its instructions remain in [README.md](README.md). This page describes development-branch behavior, not a published 0.6.0 release.
+These changes are under review after the published 0.5.0 prerelease. The published APK still copies a selected library; its historical instructions are in the [0.5.0 README](https://github.com/chillednems/IKEMEN-LAB/blob/android-v0.5.0/android/README.md). The current [README](README.md) guides this unreleased 0.6.0 candidate. This page records development details, not a published release.
 
 When a new folder is selected in this development build, the app keeps Android's persisted read permission and reads `chars/` and `stages/` from that source. It creates only a small private working `data/select.def` and its managed roster backups. Scans and artwork previews do not copy character or stage folders into app storage. Refresh library or restart the app to pick up source metadata changes while keeping unexported working roster edits.
 

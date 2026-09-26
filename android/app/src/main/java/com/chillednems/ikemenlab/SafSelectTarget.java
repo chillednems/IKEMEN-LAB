@@ -75,7 +75,11 @@ public final class SafSelectTarget implements SelectStorage.External {
         } catch (SecurityException failure) { throw new IOException("Source write access denied", failure); }
     }
     @Override public String backup(byte[] preimage, String transactionId) throws IOException {
-        requireGrant(resolver, backupTree, true);
+        try { requireGrant(resolver, backupTree, true); }
+        catch (IOException denied) {
+            throw new IOException(customBackup ? "Custom backup folder needs write access; reconnect it in Settings"
+                    : "Source backup folder needs write access; reconnect source in Settings", denied);
+        }
         Uri folder = backupFolder(true);
         if (folder == null) throw new IOException("Could not create source backup directory");
         String name = "select.def.backup." + transactionId + ".bak";
@@ -122,7 +126,11 @@ public final class SafSelectTarget implements SelectStorage.External {
         return backup.toString();
     }
     @Override public List<SelectStorage.Version> listBackups() throws IOException {
-        requireGrant(resolver, backupTree, false);
+        try { requireGrant(resolver, backupTree, false); }
+        catch (IOException denied) {
+            throw new IOException(customBackup ? "Custom backup folder needs read access; reconnect it in Settings"
+                    : "Source backup folder needs read access; reconnect source in Settings", denied);
+        }
         Uri folder = backupFolder(false);
         List<SelectStorage.Version> result = new ArrayList<>();
         if (folder == null) return result;

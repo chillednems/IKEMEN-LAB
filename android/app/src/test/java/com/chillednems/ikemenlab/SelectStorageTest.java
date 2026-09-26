@@ -258,6 +258,32 @@ public final class SelectStorageTest {
         assertArrayEquals(bytes("source"), target.contents);
         assertEquals("NONE", store.inspectPending(target));
     }
+    @Test public void privatePreimageRecoveryDoesNotNeedBackupFolder() throws Exception {
+        SelectStorage store = storage("working");
+        Fake target = new Fake("partial") {
+            @Override public String backupIdentity() { throw new AssertionError("Backup folder must not be needed for rollback"); }
+            @Override public String backup(byte[] value, String id) throws IOException {
+                throw new IOException("Custom backup folder revoked");
+            }
+        };
+        File backupDirectory = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(), "select-backups");
+        assertTrue(backupDirectory.mkdir());
+        File preimage = new File(backupDirectory, "recovery-test.bin");
+        Files.write(preimage.toPath(), bytes("before"));
+        Properties journal = new Properties();
+        journal.setProperty("target", target.identity());
+        journal.setProperty("before", SelectStorage.hash(bytes("before")));
+        journal.setProperty("after", SelectStorage.hash(bytes("after")));
+        journal.setProperty("preimage", preimage.getName());
+        journal.setProperty("phase", "writing");
+        File pending = new File(backupDirectory, "pending-export.properties");
+        try (java.io.OutputStream output = Files.newOutputStream(pending.toPath())) { journal.store(output, "fixture"); }
+        assertEquals("RECOVERY_REQUIRED", store.inspectPending(target));
+        store.restorePendingPreimage(target);
+        assertArrayEquals(bytes("before"), target.contents);
+        assertFalse(pending.exists());
+        assertFalse(preimage.exists());
+    }
     @Test public void sourceRestoreUsesImmutableVersionAndBacksUpPreviousSource() throws Exception {
         SelectStorage store = storage("first");
         store.commitWorking(store.readWorking().sha256, bytes("chosen"), "edit", null);

@@ -75,6 +75,7 @@ public final class MainActivity extends Activity {
     private File reconnectLibrary;
     private File backupPickerLibrary;
     private LibraryBinding backupPickerBinding;
+    private boolean backupPickerRecovery;
     private String recoveryIssue;
     private LibraryScanner.Catalog catalog;
     private boolean sourceSelectExists;
@@ -106,6 +107,12 @@ public final class MainActivity extends Activity {
             searchText = state.getString("search", "");
             restoreSelection = state.getString("selection");
             reconnectLibrary = managedLibrary(state.getString("reconnect"));
+            backupPickerLibrary = managedLibrary(state.getString("backupPicker"));
+            backupPickerRecovery = state.getBoolean("backupPickerRecovery", false);
+            if (backupPickerLibrary != null) {
+                try { backupPickerBinding = LibraryBinding.load(this, backupPickerLibrary); }
+                catch (IOException ignored) { backupPickerLibrary = null; backupPickerRecovery = false; }
+            }
         }
         if (Build.VERSION.SDK_INT >= 33) {
             backCallback = this::handleBack;
@@ -127,6 +134,8 @@ public final class MainActivity extends Activity {
         state.putString("search", search == null ? searchText : search.getText().toString());
         if (selected != null) state.putString("selection", selectionKey(selected));
         if (reconnectLibrary != null) state.putString("reconnect", reconnectLibrary.getAbsolutePath());
+        if (backupPickerLibrary != null) state.putString("backupPicker", backupPickerLibrary.getAbsolutePath());
+        state.putBoolean("backupPickerRecovery", backupPickerRecovery);
         super.onSaveInstanceState(state);
     }
 
@@ -387,6 +396,12 @@ public final class MainActivity extends Activity {
         BackupPolicy policy;
         try { policy = BackupPolicy.load(this, library); }
         catch (IOException error) { showStatus("Backup setting unavailable: " + error.getMessage()); return; }
+        if (hasPending(library)) {
+            showDecisionSheet("Backup location locked during recovery",
+                    "Resolve the pending source operation before changing where future backups go. If its custom backup folder lost permission, reconnect that same folder here.",
+                    "Reconnect custom backup folder", policy.knownCustomTrees.isEmpty() ? null : this::pickCustomBackupFolder);
+            return;
+        }
         showActionSheet("Verified source preimage backups · " + policy.displayName(),
                 new String[]{choiceLabel(policy.kind == BackupPolicy.Kind.SOURCE, "Source data/select-backups (default)"),
                         choiceLabel(policy.kind == BackupPolicy.Kind.APP, "App backup directory"),
@@ -408,7 +423,14 @@ public final class MainActivity extends Activity {
 
     private void pickCustomBackupFolder() {
         if (busy || library == null) return;
-        if (hasPending(library)) { showStatus("Resolve pending source recovery before changing the backup location."); return; }
+        backupPickerRecovery = hasPending(library);
+        if (backupPickerRecovery) {
+            try {
+                if (BackupPolicy.load(this, library).knownCustomTrees.isEmpty()) {
+                    showStatus("No previously selected custom backup folder is recorded for this library."); return;
+                }
+            } catch (IOException error) { showStatus("Backup setting unavailable: " + error.getMessage()); return; }
+        }
         backupPickerLibrary = library;
         backupPickerBinding = binding;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -554,6 +576,7 @@ public final class MainActivity extends Activity {
                                 "The working roster matches the linked source. You can still export after reviewing the exact destination and backup plan.",
                                 "Review Export anyway", review);
                     else review.run();
+                    showStatus(summary());
                 });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
                 busy = false; showStatus("Export preview unavailable: " + error.getMessage());
@@ -858,7 +881,7 @@ public final class MainActivity extends Activity {
             try {
                 if (current == null || current.sourceTree == null) throw new IOException("Reconnect the original source folder first.");
                 current.requireCurrent(this);
-                SelectStorage.External target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root));
+                SelectStorage.External target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root), true);
                 String destination = target.identity();
                 SelectStorage storage = new SelectStorage(root);
                 String export = storage.inspectPending(target);
@@ -897,7 +920,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 current.requireCurrent(this);
-                SelectStorage.External target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root));
+                SelectStorage.External target = new BackupTargetRouter(this, current, BackupPolicy.load(this, root), true);
                 SelectStorage storage = new SelectStorage(root);
                 if (finishLocal) storage.completePendingRestore(target);
                 else storage.restorePendingPreimage(target);
@@ -1028,22 +1051,25 @@ public final class MainActivity extends Activity {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
             if (request == RECONNECT_TREE) reconnectLibrary = null;
-            if (request == PICK_BACKUP_TREE) { backupPickerLibrary = null; backupPickerBinding = null; }
+            if (request == PICK_BACKUP_TREE) { backupPickerLibrary = null; backupPickerBinding = null; backupPickerRecovery = false; }
             return;
         }
         Uri uri = data.getData();
         if (request == PICK_BACKUP_TREE) {
             File expected = backupPickerLibrary;
             LibraryBinding expectedBinding = backupPickerBinding;
-            backupPickerLibrary = null; backupPickerBinding = null;
+            boolean recoveryReconnect = backupPickerRecovery;
+            backupPickerLibrary = null; backupPickerBinding = null; backupPickerRecovery = false;
             if (expected == null || !sameBinding(expected, expectedBinding)) return;
             int flags = persistGrant(uri, data);
             busy = true;
             IO.execute(() -> {
                 try {
-                    if ((flags & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
-                            != (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
-                        throw new IOException("Custom backup folder needs lasting read and write access");
+                    int required = recoveryReconnect ? Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            : Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+                    if ((flags & required) != required)
+                        throw new IOException(recoveryReconnect ? "Recovery backup folder needs lasting read access"
+                                : "Custom backup folder needs lasting read and write access");
                     Uri folder = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri));
                     String name;
                     try (Cursor cursor = getContentResolver().query(folder,
@@ -1055,6 +1081,15 @@ public final class MainActivity extends Activity {
                         name = cursor.getString(0);
                     }
                     if (name == null || name.trim().isEmpty()) throw new IOException("Backup folder has no display name");
+                    if (recoveryReconnect) {
+                        BackupPolicy policy = BackupPolicy.load(this, expected);
+                        if (!policy.knownCustomTrees.contains(uri))
+                            throw new IOException("Choose the same custom backup folder used before recovery");
+                        runOnUiThread(() -> { if (sameBinding(expected, expectedBinding)) {
+                            busy = false; showStatus("Custom backup folder access restored. Open Roster actions > Recovery.");
+                        } });
+                        return;
+                    }
                     String probeName = "ikemen-write-check-" + UUID.randomUUID() + ".tmp";
                     Uri probe = DocumentsContract.createDocument(getContentResolver(), folder,
                             "application/octet-stream", probeName);
