@@ -48,4 +48,28 @@ public final class RosterDiagnosticsTest {
         String text = new String(Files.readAllBytes(select.toPath()), StandardCharsets.UTF_8);
         assertTrue(text.contains("\nKFM/KFM.def\n;KFM/alternate.def\n"));
     }
+    @Test public void instructionalExamplesAreNotRosterRowsButRealMissingNamesRemain() throws Exception {
+        File root = folder.newFolder();
+        assertTrue(new File(root, "chars").mkdir());
+        assertTrue(new File(root, "stages").mkdir());
+        String roster = "[Characters]\n"
+                + ";Use the format:\n;    sample, stages/example.def\n;\n"
+                + ";This example loads chars/sample/alternate.def:\n;    sample/alternate.def, stages/example.def\n;\n"
+                + ";Place the ZIP file in the chars/ directory. The syntax is as\n;follows:\n"
+                + ";    example.zip/inside.def, stages/example.def\n;\n"
+                + ";Insert your characters below.\n"
+                + "Missing (Hero)/Missing (Hero).def\n"
+                + ";架空 (風)/架空 (風).def\n"
+                + "[ExtraStages]\n;Examples:\n; stages/demo.def, order=3\n;\n"
+                + ";Insert your stages below.\n;stages/Lost Stage.def\n";
+        List<RosterDiagnostics.Entry> entries = RosterDiagnostics.entries(root, roster.getBytes(StandardCharsets.UTF_8));
+        assertEquals(3, entries.size());
+        assertEquals("Missing (Hero)/Missing (Hero).def", entries.get(0).rawReference);
+        assertTrue(entries.get(0).active);
+        assertEquals("架空 (風)/架空 (風).def", entries.get(1).rawReference);
+        assertFalse(entries.get(1).active);
+        assertEquals("stages/Lost Stage.def", entries.get(2).rawReference);
+        assertFalse(entries.get(2).active);
+        assertEquals(3, RosterDiagnostics.scan(root, roster.getBytes(StandardCharsets.UTF_8)).size());
+    }
 }
