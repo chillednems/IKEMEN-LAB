@@ -1,32 +1,46 @@
-# IKEMEN Lab for Android (library preview)
+# IKEMEN Lab for Android
 
-This Android app manages a copied IKEMEN/MUGEN library. It does not include or launch IKEMEN GO. It is intended for landscape handheld use with touch or a built-in controller; Android may show it in another orientation or window size on large displays. Its stable package ID is `com.chillednems.ikemenlab`. The 0.1.0 prerelease has version code 1; this 0.2.0 build has version code 2. Updates require a higher version code and the same signing certificate.
+IKEMEN Lab browses an unpacked IKEMEN or MUGEN folder, previews supported character and stage artwork, and manages its `select.def` roster. Android 8.0 or newer is required. It does not launch a game.
 
-## Android releases
+## Import and browse
 
-- **0.1.0 (code 1):** First library manager from source commit `c028b52`. Import an unpacked folder through Android's folder picker into a bounded managed copy; browse and search character and stage DEF metadata; enable or disable roster entries with backups and preservation of unrelated `select.def` content; export the roster through Android's document picker; navigate by touch or physical controller. This baseline includes legacy roster byte-preservation and lone-CR line-ending fixes. Some document providers may append `.txt` to an exported `select.def` in this version.
-- **0.2.0 (code 2):** Adds bounded character portrait and stage artwork previews in supported SFF/PNG formats and the approved Fighter Lab launcher icon. Changes the export document type to avoid providers appending `.txt`, moves previews to a separate latest-selection queue so large artwork does not delay library operations, and adds environment-based durable release signing. A provider's final export filename should still be checked after saving. This version is intended to update 0.1.0 when signed with the same release key.
+1. Choose **Switch folder** and pick the library root containing `chars/` and `stages/`. Allow read and write access if Android offers it. The app copies the folder into its private storage and remembers that library between launches. The picked source is unchanged during import.
+2. Search or scroll characters and stages. Tap an item once to select it; tap the selected item again to toggle its roster state. On a controller, move focus with the D-pad or left stick and press **A** once to select, then **A** again to toggle. **B** clears the selection or goes back.
+3. Details show name, author, reference, and preview before file paths and roster controls. The list and details scroll separately. Missing roster references remain visible in red with a text warning; a missing entry can be disabled but cannot be enabled until its file is restored.
 
-## Build
+On a short landscape window, **More** contains Switch folder, Roster actions, and Settings. The toolbar has a direct **Portrait** control. On larger windows, these controls appear in the main action row. You can change back to Landscape through **Settings → Screen orientation**. The orientation choice persists.
 
-Install JDK 17 and Android SDK platform/build tools 36, then from `android/` run:
+## Export safely to the source folder
+
+Open **Roster actions → Review export to linked source**. The review shows the exact existing destination, counts of enabled, disabled, added, and removed references, missing-reference warnings, and the pre-write backup location. **No changes** means the source already matches the private roster.
+
+Choose **Back up and overwrite** only after checking the review. The app first saves and verifies the exact source preimage in `data/select-backups/`, then updates the existing `data/select.def` and reads it back. If the destination changed after the review, the operation stops and asks for a fresh preview. It does not create a numbered `select.def` or `select.def.txt` in the source. A provider that cannot preserve the exact backup filename or write safely stops the export.
+
+**Roster actions → Save a copy elsewhere** still uses Android's document picker. That copy does not update the linked source folder; use it when moving a roster to another installation manually. Check the filename your provider creates.
+
+## Backups and restore
+
+Every changed private roster edit saves a verified private version. A successful source overwrite saves a verified source preimage. Open **Roster actions → Backups and restore** to see available private and source versions. Select a version, then choose:
+
+- **Load local only** to replace the app's private working roster while leaving the source untouched.
+- **Source and local** to review the exact source replacement, back up its current bytes, then apply the selected version to both source and private working roster.
+
+In **Settings → Backups to keep**, leave the field empty for unlimited history (the default), or enter a positive number. Finite retention applies after successful writes and prunes only verified backups managed by this app. Unmanaged files are left alone.
+
+If the source folder's permission is revoked or you upgrade from an older local-only library, choose **Settings → Reconnect source folder** (also available in Roster actions) and pick the original folder again. Reconnect accepts only the previously linked folder; use **Switch folder** to import a different library. Your private copy remains available. If an interrupted source operation needs attention, **Roster actions → Recovery** shows the required step; normal edits and exports remain blocked until it is resolved. If a restore is irreconcilable, Recovery can preserve and verify both current versions as backups before stopping that restore.
+
+## Current limits
+
+Import accepts an unpacked folder rather than a ZIP/RAR/7z archive, with up to 20,000 entries, 8 GB of copied data, and 20 folder levels. Failed imports remove their partial staging copy. Switching folders retains earlier managed copies in private app storage; uninstalling the app removes those copies and their private backups.
+
+Previews support direct PNG, SFF v1 8-bit PCX with a palette, and SFF v2 embedded PNG formats 11/12. Stage artwork is one sprite, not a composited scene. Other SFF encodings, missing palettes, oversized or malformed images may be unavailable. Legacy Japanese `.def` metadata uses heuristic decoding and can misread a one-character field. The app does not manage screenpacks, install content into a game, or launch IKEMEN GO.
+
+## Build from source
+
+The package ID is `com.chillednems.ikemenlab`; this source is version 0.4.0 (version code 4). Install JDK 17 and Android SDK platform/build tools 36. From `android/`, run:
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. This is a locally signed debug build for testing, not a Play Store or public release artifact. Android 8.0 (API 26) or newer is required. SDK setup and license acceptance are the builder's responsibility.
-
-To build the signed 0.2.0 APK, set `IKEMEN_RELEASE_STORE_FILE` to an existing **absolute** keystore path and set `IKEMEN_RELEASE_KEY_ALIAS`, `IKEMEN_RELEASE_STORE_PASSWORD`, and `IKEMEN_RELEASE_KEY_PASSWORD` in the build process environment. Run `./gradlew :app:assembleRelease`; missing values or a missing keystore fail the release build. Keep the keystore and credentials outside Git. The result is `app/build/outputs/apk/release/app-release.apk`. Preserve that signing key for updates, and increase `versionCode` for every later release. Existing debug installs use a different certificate: uninstall the debug app once before installing a release APK. This removes its managed library data, so export any needed `select.def` first. A release-signed 0.1.0 installation should upgrade to release-signed 0.2.0 without uninstalling when both use the same certificate.
-
-## Use
-
-1. Choose **Import folder** and select the root of an unpacked IKEMEN library with `chars/` and `stages/`. The app copies that tree into its private storage. It never edits the picked source folder. Case differences in the root folder names and `.def` extension are accepted.
-2. Search characters and stages, select an entry, view its metadata and available sprite artwork, and enable or disable it in the roster. An item absent from `select.def` is shown as **Unlisted**; enabling it adds a relative reference. Each edit backs up the previous `data/select.def` inside the managed copy.
-3. Choose **Export select.def** to write the edited roster to a user-selected location. Copy that exported file into your actual IKEMEN installation yourself, after checking it against that installation's content.
-
-Use touch, D-pad, or left stick to move between controls. A selects the focused control; B goes back. A yellow outline shows controller focus. The page scrolls on short landscape screens and adapts to wider or narrower windows.
-
-Import is limited to 20,000 entries, 8 GB of copied bytes, and 20 folder levels; failed imports remove their staging directory. It accepts folders, not archive files. Browsing uses `.def` metadata and shows a real character portrait or stage artwork sprite when it can decode SFF v1 8-bit PCX with a palette, SFF v2 embedded PNG formats 11/12, or a direct PNG. Stage artwork uses the first `[BG ...] spriteno` reference when present, then group 9000 or 0,0; it is one sprite, not a composited stage scene. SFF v2 RLE5/RLE8/LZ5, linked sprites, missing palettes, and oversized or malformed images report an unavailable preview. Preview SFF files are limited to 64 MB and decoded images to 4 million pixels. Legacy Japanese `.def` metadata is decoded heuristically; a field with only one Japanese character may display incorrectly. A future explicit encoding selection is needed for ambiguous files. It does not install a browser extension, import RAR/7z/ZIP, manage screenpacks, edit the original picked folder, or launch a game. The app currently retains managed copies when a different folder is imported; Android app removal deletes them. Exported `select.def` must be paired with the appropriate content in the target IKEMEN library.
-
-Unit tests cover DEF parsing, case-insensitive folder discovery, nested stages and stage sprite references, SFF preview extraction/failure cases, select.def preservation and backups, import bounds, and stick direction policy. Emulator/physical-controller behavior still needs device QA, including on AYN Odin 3.
+The debug APK uses a debug certificate and cannot update a release-signed install. A release build requires the existing key through `IKEMEN_RELEASE_STORE_FILE` (absolute path), `IKEMEN_RELEASE_KEY_ALIAS`, `IKEMEN_RELEASE_STORE_PASSWORD`, and `IKEMEN_RELEASE_KEY_PASSWORD` in the build environment. With those set, run `./gradlew :app:assembleRelease`. Preserve that key for updates and keep it and its passwords outside Git.
