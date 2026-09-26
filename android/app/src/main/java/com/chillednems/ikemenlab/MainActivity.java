@@ -23,8 +23,10 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.File;
 import java.io.InputStream;
@@ -50,6 +52,8 @@ public final class MainActivity extends Activity {
     private LinearLayout detail;
     private Button rosterButton;
     private TextView status;
+    private boolean compactLayout;
+    private boolean forceCompactLayout;
     private EditText search;
     private File library;
     private LibraryScanner.Catalog catalog;
@@ -142,9 +146,18 @@ public final class MainActivity extends Activity {
     }
 
     private void buildScreen() {
+        boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        compactLayout = landscape && (forceCompactLayout || getResources().getConfiguration().screenHeightDp < 320);
         root = column();
+        if (landscape && !compactLayout) root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (bottom - top < dp(320) && !forceCompactLayout) {
+                forceCompactLayout = true;
+                searchText = search.getText().toString();
+                view.post(this::buildScreen);
+            }
+        });
         root.setBackgroundColor(0xff111d27);
-        root.setPadding(dp(12), dp(8), dp(12), dp(8));
+        root.setPadding(dp(12), dp(compactLayout ? 2 : 8), dp(12), dp(compactLayout ? 2 : 8));
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             int left, top, right, bottom;
             if (Build.VERSION.SDK_INT >= 30) {
@@ -154,21 +167,11 @@ public final class MainActivity extends Activity {
                 left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop();
                 right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
             }
-            view.setPadding(dp(12) + left, dp(8) + top, dp(12) + right, dp(8) + bottom);
+            int vertical = dp(compactLayout ? 2 : 8);
+            view.setPadding(dp(12) + left, vertical + top, dp(12) + right, vertical + bottom);
             return insets;
         });
         setContentView(root);
-
-        root.addView(label("IKEMEN Lab · Android library", 24, true));
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        root.addView(actions);
-        actions.addView(button("Switch folder", this::pickFolder), new LinearLayout.LayoutParams(0, dp(58), 1));
-        actions.addView(button("Export select.def", this::pickExport), new LinearLayout.LayoutParams(0, dp(58), 1));
-        actions.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(0, dp(58), 1));
-        status = label("Choose an IKEMEN folder with chars and stages.", 14, false);
-        root.addView(status);
 
         search = new EditText(this);
         search.setSingleLine(true);
@@ -178,14 +181,36 @@ public final class MainActivity extends Activity {
         search.setText(searchText);
         search.setPadding(dp(12), dp(8), dp(12), dp(8));
         search.setBackgroundColor(0xff243440);
-        root.addView(search, new LinearLayout.LayoutParams(-1, dp(52)));
+        if (compactLayout) {
+            LinearLayout toolbar = new LinearLayout(this);
+            toolbar.setOrientation(LinearLayout.HORIZONTAL);
+            root.addView(toolbar, new LinearLayout.LayoutParams(-1, dp(48)));
+            Button more = button("More", () -> {});
+            more.setOnClickListener(this::showCompactMenu);
+            toolbar.addView(more, new LinearLayout.LayoutParams(dp(88), dp(48)));
+            toolbar.addView(search, new LinearLayout.LayoutParams(0, dp(48), 1));
+            toolbar.addView(button("Portrait", () -> chooseOrientation("portrait")), new LinearLayout.LayoutParams(dp(108), dp(48)));
+            status = null;
+        } else {
+            root.addView(label("IKEMEN Lab · Android library", 24, true));
+            LinearLayout actions = new LinearLayout(this);
+            actions.setOrientation(LinearLayout.HORIZONTAL);
+            root.addView(actions);
+            actions.addView(button("Switch folder", this::pickFolder), new LinearLayout.LayoutParams(0, dp(58), 1));
+            actions.addView(button("Export select.def", this::pickExport), new LinearLayout.LayoutParams(0, dp(58), 1));
+            actions.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(0, dp(58), 1));
+            status = label("Choose an IKEMEN folder with chars and stages.", 14, false);
+            status.setSingleLine(true);
+            status.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            root.addView(status);
+            root.addView(search, new LinearLayout.LayoutParams(-1, dp(52)));
+        }
         search.addTextChangedListener(new android.text.TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             public void onTextChanged(CharSequence s, int start, int before, int count) { searchText = s.toString(); renderList(); }
             public void afterTextChanged(android.text.Editable e) {}
         });
 
-        boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
         LinearLayout panels = new LinearLayout(this);
         panels.setOrientation(landscape ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         root.addView(panels, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -219,15 +244,30 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Screen orientation")
                 .setSingleChoiceItems(new String[]{"Landscape", "Portrait"}, "portrait".equals(current) ? 1 : 0,
                         (dialog, which) -> {
-                            String choice = which == 1 ? "portrait" : "landscape";
-                            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_ORIENTATION, choice).apply();
                             dialog.dismiss();
-                            applyOrientation();
+                            chooseOrientation(which == 1 ? "portrait" : "landscape");
                         })
                 .setNegativeButton("Cancel", null).show();
     }
 
-    private void showStatus(String message) { if (status != null) status.setText(message); }
+    private void chooseOrientation(String choice) {
+        if (busy) return;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_ORIENTATION, choice).apply();
+        applyOrientation();
+    }
+
+    private void showCompactMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add("Switch folder").setOnMenuItemClickListener(item -> { pickFolder(); return true; });
+        menu.getMenu().add("Export select.def").setOnMenuItemClickListener(item -> { pickExport(); return true; });
+        menu.show();
+    }
+
+    private void showStatus(String message) {
+        if (status != null) status.setText(message);
+        else if (!message.equals(summary()) && !message.startsWith("Choose an IKEMEN folder"))
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
 
     private File managedLibrary(String path) {
         if (path == null) return null;
