@@ -1,8 +1,6 @@
 package com.chillednems.ikemenlab;
 
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.Dialog;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
@@ -20,9 +18,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
@@ -54,6 +52,9 @@ public final class MainActivity extends Activity {
     private static final String KEY_ORIENTATION = "orientation";
     private static final String KEY_RETENTION = "backup_retention";
     private LinearLayout root;
+    private FrameLayout screenFrame;
+    private LinearLayout activeSheet;
+    private View sheetPreviousFocus;
     private LinearLayout list;
     private LinearLayout detail;
     private Button rosterButton;
@@ -157,6 +158,8 @@ public final class MainActivity extends Activity {
     }
 
     private void buildScreen() {
+        activeSheet = null;
+        sheetPreviousFocus = null;
         boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
         compactLayout = landscape && (forceCompactLayout || getResources().getConfiguration().screenHeightDp < 320);
         root = column();
@@ -182,7 +185,9 @@ public final class MainActivity extends Activity {
             view.setPadding(dp(12) + left, vertical + top, dp(12) + right, vertical + bottom);
             return insets;
         });
-        setContentView(root);
+        screenFrame = new FrameLayout(this);
+        screenFrame.addView(root, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(screenFrame);
 
         search = new EditText(this);
         search.setSingleLine(true);
@@ -264,8 +269,7 @@ public final class MainActivity extends Activity {
         input.setHintTextColor(0xffa8b9c7);
         input.setText(getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_RETENTION, ""));
         LinearLayout panel = column();
-        panel.setBackgroundColor(0xff111d27);
-        panel.addView(label("Verified backups to keep", 20, true));
+        panel.addView(sheetTitle("Backups to keep"), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(true);
         LinearLayout content = column();
@@ -275,22 +279,18 @@ public final class MainActivity extends Activity {
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
-        panel.addView(choices, new LinearLayout.LayoutParams(-1, dp(54)));
-        Dialog dialog = new Dialog(this);
-        dialog.setContentView(panel, new ViewGroup.LayoutParams(-1, -1));
+        panel.addView(choices, new LinearLayout.LayoutParams(-1, dp(48)));
         choices.addView(button("Save", () -> {
                     String value = input.getText().toString().trim();
                     try {
                         if (!value.isEmpty() && Integer.parseInt(value) < 1) throw new NumberFormatException();
                         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_RETENTION, value).apply();
-                        dialog.dismiss();
+                        dismissSheet();
                         showStatus(value.isEmpty() ? "Backup retention: unlimited." : "Keep " + value + " verified backups after future writes.");
                     } catch (NumberFormatException invalid) { showStatus("Enter a positive whole number, or leave empty for unlimited."); }
                 }), new LinearLayout.LayoutParams(0, -1, 1));
-        choices.addView(button("Cancel", dialog::dismiss), new LinearLayout.LayoutParams(0, -1, 1));
-        dialog.show();
-        if (dialog.getWindow() != null)
-            dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+        choices.addView(button("Cancel", this::dismissSheet), new LinearLayout.LayoutParams(0, -1, 1));
+        presentSheet(panel, scroll);
     }
 
     private Integer retention() throws IOException {
@@ -313,47 +313,83 @@ public final class MainActivity extends Activity {
 
     private void showActionSheet(String title, String[] labels, Runnable[] actions) {
         LinearLayout panel = column();
-        panel.setBackgroundColor(0xff111d27);
-        panel.addView(label(title, 20, true));
+        panel.addView(sheetTitle(title), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(true);
         LinearLayout content = column();
         scroll.addView(content);
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        Dialog dialog = new Dialog(this);
-        dialog.setContentView(panel, new ViewGroup.LayoutParams(-1, -1));
         for (int i = 0; i < labels.length; i++) {
             Runnable action = actions[i];
-            content.addView(button(labels[i], () -> { dialog.dismiss(); action.run(); }),
-                    new LinearLayout.LayoutParams(-1, dp(52)));
+            content.addView(button(labels[i], () -> { dismissSheet(); action.run(); }),
+                    new LinearLayout.LayoutParams(-1, dp(48)));
         }
-        panel.addView(button("Close", dialog::dismiss), new LinearLayout.LayoutParams(-1, dp(52)));
-        dialog.show();
-        if (dialog.getWindow() != null)
-            dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
-        scroll.post(() -> scroll.scrollTo(0, 0));
+        panel.addView(button("Close", this::dismissSheet), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
     }
 
     private void showDecisionSheet(String title, String message, String actionLabel, Runnable action) {
         LinearLayout panel = column();
-        panel.setBackgroundColor(0xff111d27);
-        panel.addView(label(title, 20, true));
+        panel.addView(sheetTitle(title), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(true);
-        scroll.addView(label(message, 15, false));
+        TextView body = label(message, compactLayout ? 14 : 15, false);
+        body.setPadding(dp(4), dp(2), dp(4), dp(2));
+        scroll.addView(body);
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
-        panel.addView(choices, new LinearLayout.LayoutParams(-1, dp(54)));
-        Dialog dialog = new Dialog(this);
-        dialog.setContentView(panel, new ViewGroup.LayoutParams(-1, -1));
-        if (action != null) choices.addView(button(actionLabel, () -> { dialog.dismiss(); action.run(); }),
+        panel.addView(choices, new LinearLayout.LayoutParams(-1, dp(48)));
+        if (action != null) choices.addView(button(actionLabel, () -> { dismissSheet(); action.run(); }),
                 new LinearLayout.LayoutParams(0, -1, 1));
-        choices.addView(button("Close", dialog::dismiss), new LinearLayout.LayoutParams(0, -1, 1));
-        dialog.show();
-        if (dialog.getWindow() != null)
-            dialog.getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+        choices.addView(button("Close", this::dismissSheet), new LinearLayout.LayoutParams(0, -1, 1));
+        presentSheet(panel, scroll);
+    }
+
+    private TextView sheetTitle(String title) {
+        TextView heading = label(title, compactLayout ? 17 : 20, true);
+        heading.setSingleLine(true);
+        heading.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        heading.setPadding(dp(4), dp(2), dp(4), dp(2));
+        return heading;
+    }
+
+    private void presentSheet(LinearLayout panel, ScrollView scroll) {
+        dismissSheet();
+        sheetPreviousFocus = getCurrentFocus();
+        activeSheet = panel;
+        panel.setBackgroundColor(0xff111d27);
+        panel.setPadding(dp(4), root.getPaddingTop(), dp(4), dp(2));
+        panel.setClickable(true);
+        screenFrame.addView(panel, new FrameLayout.LayoutParams(-1, -1));
+        root.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        scroll.setFocusableInTouchMode(true);
+        scroll.requestFocus();
         scroll.post(() -> scroll.scrollTo(0, 0));
+    }
+
+    private void dismissSheet() {
+        if (activeSheet == null) return;
+        screenFrame.removeView(activeSheet);
+        activeSheet = null;
+        root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        View previous = sheetPreviousFocus;
+        sheetPreviousFocus = null;
+        if (previous != null && previous.isAttachedToWindow()) previous.requestFocus();
+    }
+
+    private static String shortTargetName(String identity) {
+        try {
+            String document = DocumentsContract.getDocumentId(Uri.parse(identity));
+            int separator = Math.max(document.lastIndexOf('/'), document.lastIndexOf(':'));
+            if (separator >= 0 && separator + 1 < document.length()) return document.substring(separator + 1);
+        } catch (IllegalArgumentException ignored) { }
+        return "select.def";
+    }
+
+    private static String changeCounts(RosterChangeSummary changes) {
+        return "Enabled " + changes.enabled + " · Disabled " + changes.disabled
+                + "\nAdded " + changes.added + " · Removed " + changes.removed;
     }
 
     private void reviewSourceExport() {
@@ -375,12 +411,13 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> { if (isDestroyed() || !root.equals(library)) return;
                     busy = false;
                     boolean changed = !plan.sourceHash.equals(plan.workingHash);
-                    String message = (changed ? "Review changes before updating the linked source.\n\n" : "No changes: source and private roster match.\n\n")
-                            + changes.describe() + "\nMissing references in replacement: " + plan.missingWarnings.size()
-                            + "\n\nDestination: linked source → data/select.def"
-                            + "\nExact document: " + plan.targetIdentity
-                            + "\nCurrent source will be backed up to " + plan.backupDestination
-                            + ".\nVerified backups to keep: " + (keep == null ? "unlimited" : keep);
+                    String message = (changed ? "Destination: linked " : "No changes · linked ")
+                            + shortTargetName(plan.targetIdentity) + "\n" + changeCounts(changes)
+                            + "\nBackup before overwrite: " + (changed ? "yes" : "not needed")
+                            + "\nMissing references: " + plan.missingWarnings.size()
+                            + "\n\nExact document: " + plan.targetIdentity
+                            + "\nBackup folder: " + plan.backupDestination
+                            + "\nVerified backups to keep: " + (keep == null ? "unlimited" : keep);
                     showDecisionSheet("Review source export", message,
                             "Back up and overwrite", changed ? () -> executeSourceExport(root, current, plan, keep) : null);
                 });
@@ -493,10 +530,13 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> { if (isDestroyed() || !root.equals(library)) return;
                     busy = false;
                     showDecisionSheet("Review source and local restore",
-                            changes.describe() + "\n\nDestination: linked source → data/select.def"
-                                    + "\nExact document: " + plan.targetIdentity
-                                    + "\nCurrent source will be backed up to " + plan.backupDestination
-                                    + "; then the private working copy will load the selected backup.\nVerified backups to keep: "
+                            "Destination: linked " + shortTargetName(plan.targetIdentity)
+                                    + "\n" + changeCounts(changes)
+                                    + "\nBackup before overwrite: yes"
+                                    + "\nPrivate copy loads selected backup"
+                                    + "\n\nExact document: " + plan.targetIdentity
+                                    + "\nBackup folder: " + plan.backupDestination
+                                    + "\nVerified backups to keep: "
                                     + (keep == null ? "unlimited" : keep),
                             "Back up and restore", () -> executeSourceRestore(root, current, ref, workingHash, plan, keep));
                 });
@@ -695,8 +735,12 @@ public final class MainActivity extends Activity {
 
     private void syncActiveLibrary(String path) {
         File active = managedLibrary(path);
+        LibraryBinding previousBinding = binding;
         try { binding = active == null ? null : LibraryBinding.load(this, active); }
         catch (IOException error) { binding = null; showStatus("Source link unavailable: " + error.getMessage()); }
+        if (activeSheet != null && ((active == null ? library != null : !active.equals(library))
+                || (previousBinding != null && binding != null
+                && previousBinding.generation != binding.generation))) dismissSheet();
         if (active == null ? library == null : active.equals(library)) {
             if (active != null && catalog == null) refreshCatalog();
             if (active != null) checkRecoveryAtStartup(active, binding);
@@ -1040,6 +1084,7 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
+        if (activeSheet != null) { dismissSheet(); return; }
         if (selected != null) { selected = null; renderList(); return; }
         finish();
     }
