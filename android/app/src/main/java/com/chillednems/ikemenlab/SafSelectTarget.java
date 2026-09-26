@@ -68,6 +68,7 @@ public final class SafSelectTarget implements SelectStorage.External {
         if (backup == null) throw new IOException("Could not create source preimage backup");
         Uri manifest = null;
         try {
+            ManagedBackupFormat.requireExactName(name, displayName(backup));
             try (OutputStream output = resolver.openOutputStream(backup, "rwt")) {
                 if (output == null) throw new IOException("Could not write source preimage backup");
                 output.write(preimage); output.flush();
@@ -82,12 +83,13 @@ public final class SafSelectTarget implements SelectStorage.External {
                 createdAt = Math.max(createdAt, existing.createdAt + 1);
             metadata.setProperty("createdAt", Long.toString(createdAt));
             metadata.setProperty("reason", "source replacement");
-            metadata.setProperty("origin", "source");
+            ManagedBackupFormat.mark(metadata, transactionId, "source");
             ByteArrayOutputStream serialized = new ByteArrayOutputStream();
             metadata.store(serialized, "managed select.def source backup");
-            manifest = DocumentsContract.createDocument(resolver, folder, "text/plain",
-                    "select.def.backup." + transactionId + ".properties");
+            String metadataName = "select.def.backup." + transactionId + ".properties";
+            manifest = DocumentsContract.createDocument(resolver, folder, "application/octet-stream", metadataName);
             if (manifest == null) throw new IOException("Could not create source backup metadata");
+            ManagedBackupFormat.requireExactName(metadataName, displayName(manifest));
             try (OutputStream output = resolver.openOutputStream(manifest, "rwt")) {
                 if (output == null) throw new IOException("Could not write source backup metadata");
                 output.write(serialized.toByteArray()); output.flush();
@@ -122,8 +124,7 @@ public final class SafSelectTarget implements SelectStorage.External {
                 try {
                     p.load(new java.io.ByteArrayInputStream(readDocument(manifest)));
                     byte[] bytes = readDocument(body);
-                    if (!SelectStorage.hash(bytes).equals(p.getProperty("sha256"))
-                            || !Integer.toString(bytes.length).equals(p.getProperty("bytes"))) continue;
+                    if (!ManagedBackupFormat.validSource(id, p, bytes)) continue;
                     result.add(new SelectStorage.Version(id, p, bytes.length));
                 } catch (IOException | NumberFormatException ignored) { } // Unverified files remain untouched.
             }
@@ -165,8 +166,16 @@ public final class SafSelectTarget implements SelectStorage.External {
         if (folder == null && create) {
             try { folder = DocumentsContract.createDocument(resolver, data, MIME_DIR, "select-backups"); }
             catch (Exception failure) { throw new IOException("Could not create source backup directory", failure); }
+            if (folder != null) ManagedBackupFormat.requireExactName("select-backups", displayName(folder));
         }
         return folder;
+    }
+    private String displayName(Uri document) throws IOException {
+        try (Cursor cursor = resolver.query(document,
+                new String[] { DocumentsContract.Document.COLUMN_DISPLAY_NAME }, null, null, null)) {
+            if (cursor == null || !cursor.moveToFirst()) throw new IOException("Provider did not return document name");
+            return cursor.getString(0);
+        } catch (SecurityException failure) { throw new IOException("Document name access denied", failure); }
     }
 
     private byte[] readDocument(Uri document) throws IOException {

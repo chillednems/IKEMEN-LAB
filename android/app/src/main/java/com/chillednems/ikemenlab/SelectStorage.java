@@ -96,12 +96,23 @@ public final class SelectStorage {
     /** null retention means unlimited; positive N keeps newest N managed versions. */
     public synchronized CommitResult commitWorking(String expectedSha256, byte[] replacement,
                                                     String reason, Integer retention) throws IOException {
-        return commitWorking(expectedSha256, replacement, reason, retention, null);
+        return commitWorking(expectedSha256, replacement, reason, retention, null, false);
     }
     private synchronized CommitResult commitWorking(String expectedSha256, byte[] replacement,
-                                                    String reason, Integer retention, String protectedVersion) throws IOException {
+                                                    String reason, Integer retention, String protectedVersion,
+                                                    boolean completingSourceRestore) throws IOException {
         checked(replacement); validateRetention(retention);
         try (Locked ignored = lock()) {
+            if (pendingRestore().exists()) {
+                if (!completingSourceRestore) throw new IOException("Resolve pending source restore before editing");
+                Properties pending = readProperties(pendingRestore());
+                if (!expectedSha256.equals(pending.getProperty("beforeLocal"))
+                        || !hash(replacement).equals(pending.getProperty("after"))
+                        || !reason.equals("restore-source:" + pending.getProperty("version")))
+                    throw new IOException("Pending source restore does not match this edit");
+            } else if (completingSourceRestore) throw new IOException("No pending source restore");
+            if (pendingJournal().exists() && !completingSourceRestore)
+                throw new IOException("Resolve pending export before editing");
             byte[] old = readLimited(select);
             if (!hash(old).equals(expectedSha256)) throw new IOException("Working select.def changed; reload");
             if (MessageDigest.isEqual(old, replacement)) return new CommitResult(false, expectedSha256, null);
@@ -114,7 +125,7 @@ public final class SelectStorage {
         }
     }
     public synchronized CommitResult restoreLoadOnly(String id, String expectedHash, Integer retention) throws IOException {
-        return commitWorking(expectedHash, readVersion(id), "restore:" + id, retention, id);
+        return commitWorking(expectedHash, readVersion(id), "restore:" + id, retention, id, false);
     }
     public synchronized List<Version> listVersions() throws IOException {
         try (Locked ignored = lock()) { migrateLegacy(); return verifiedVersions(); }
@@ -141,7 +152,7 @@ public final class SelectStorage {
     public CommitResult restoreLoadOnly(External target, BackupRef ref, String expectedHash, Integer retention) throws IOException {
         byte[] selected = readBackup(target, ref);
         return commitWorking(expectedHash, selected, "restore:" + ref.origin + ":" + ref.id,
-                retention, ref.origin == BackupRef.Origin.WORKING ? ref.id : null);
+                retention, ref.origin == BackupRef.Origin.WORKING ? ref.id : null, false);
     }
     public ExportPlan planExport(External target, String expectedWorkingHash) throws IOException {
         Snapshot working = readWorking();
@@ -193,7 +204,7 @@ public final class SelectStorage {
         try {
             ExportResult source = executeExport(target, plan, true, retention);
             CommitResult working = commitWorking(expectedWorkingHash, chosen, "restore-source:" + selectedBackup.id,
-                    retention, selectedBackup.origin == BackupRef.Origin.WORKING ? selectedBackup.id : null);
+                    retention, selectedBackup.origin == BackupRef.Origin.WORKING ? selectedBackup.id : null, true);
             Files.deleteIfExists(pendingRestore().toPath());
             return new RestoreResult(source, working);
         } catch (IOException failure) {
@@ -234,7 +245,7 @@ public final class SelectStorage {
         byte[] chosen = origin == BackupRef.Origin.WORKING ? readVersion(id) : target.readBackup(id);
         if (!hash(chosen).equals(pending.getProperty("after"))) throw new IOException("Restore backup changed");
         CommitResult result = commitWorking(pending.getProperty("beforeLocal"), chosen,
-                "restore-source:" + id, retention, origin == BackupRef.Origin.WORKING ? id : null);
+                "restore-source:" + id, retention, origin == BackupRef.Origin.WORKING ? id : null, true);
         Files.deleteIfExists(pendingRestore().toPath());
         return result;
     }
@@ -395,7 +406,8 @@ public final class SelectStorage {
         Files.move(temp.toPath(), body.toPath(), StandardCopyOption.ATOMIC_MOVE);
         Properties p = new Properties();
         p.setProperty("sha256", hash(bytes)); p.setProperty("bytes", Integer.toString(bytes.length));
-        p.setProperty("reason", reason == null ? "edit" : reason); p.setProperty("origin", origin);
+        p.setProperty("reason", reason == null ? "edit" : reason);
+        ManagedBackupFormat.mark(p, id, origin);
         p.setProperty("createdAt", Long.toString(createdAt));
         File tempMeta = new File(versions, "." + id + ".properties.tmp");
         try (FileOutputStream out = new FileOutputStream(tempMeta)) { p.store(out, "managed select.def version"); out.getFD().sync(); }
@@ -408,7 +420,7 @@ public final class SelectStorage {
         Properties p = new Properties();
         try (InputStream input = Files.newInputStream(meta.toPath())) { p.load(input); }
         byte[] bytes = readLimited(body);
-        if (!hash(bytes).equals(p.getProperty("sha256")) || !Integer.toString(bytes.length).equals(p.getProperty("bytes"))) return null;
+        if (!ManagedBackupFormat.validLocal(id, p, bytes)) return null;
         try { return new Version(id, p, bytes.length); } catch (NumberFormatException invalid) { return null; }
     }
     private List<Version> verifiedVersions() throws IOException {

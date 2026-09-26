@@ -91,6 +91,27 @@ public final class SelectStorageTest {
         assertEquals("two", new String(store.readVersion(store.listVersions().get(0).id), StandardCharsets.UTF_8));
         assertEquals("keep", new String(Files.readAllBytes(unmanaged.toPath()), StandardCharsets.UTF_8));
     }
+    @Test public void finiteRetentionLeavesValidHashForeignFilePairUntouched() throws Exception {
+        SelectStorage store = storage("one");
+        File directory = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(), "select-backups");
+        assertTrue(directory.mkdir());
+        String id = "1111111111111-11111111-1111-1111-1111-111111111111";
+        byte[] foreign = bytes("foreign");
+        File body = new File(directory, id + ".bin");
+        File metadata = new File(directory, id + ".properties");
+        Files.write(body.toPath(), foreign);
+        Properties fields = new Properties();
+        fields.setProperty("sha256", SelectStorage.hash(foreign));
+        fields.setProperty("bytes", Integer.toString(foreign.length));
+        fields.setProperty("createdAt", "1");
+        fields.setProperty("origin", "working");
+        try (java.io.OutputStream output = Files.newOutputStream(metadata.toPath())) { fields.store(output, "user data"); }
+        store.commitWorking(store.readWorking().sha256, bytes("two"), "edit", 1);
+        store.commitWorking(store.readWorking().sha256, bytes("three"), "edit", 1);
+        assertArrayEquals(foreign, Files.readAllBytes(body.toPath()));
+        assertTrue(metadata.isFile());
+        assertEquals(1, store.listVersions().size());
+    }
     @Test public void restoreIsByteExactAndLeavesVersionImmutable() throws Exception {
         byte[] first = new byte[] {(byte)0xef,(byte)0xbb,(byte)0xbf,'[','C',']','\r','\n',(byte)0x80,'\r'};
         SelectStorage store = storage("placeholder");
@@ -234,6 +255,43 @@ public final class SelectStorageTest {
         assertArrayEquals(bytes("source-current"), target.backup);
         assertArrayEquals(bytes("source-old"), target.readBackup(selected.id));
         assertEquals(2, target.versions.size()); // Chosen version and immediate preimage are protected.
+    }
+    @Test public void pendingSourceRestoreBlocksToggleAndLoadOnlyWithoutLosingCompletion() throws Exception {
+        SelectStorage store = storage("[Characters]\nKFM/KFM.def\n");
+        String selectedText = "[Characters]\n;KFM/KFM.def\n";
+        store.commitWorking(store.readWorking().sha256, bytes(selectedText), "edit", null);
+        SelectStorage.CommitResult result = store.commitWorking(store.readWorking().sha256,
+                bytes("[Characters]\nKFM/KFM.def\n"), "edit", null);
+        String selectedId = result.previousVersion.id;
+        Fake target = new Fake(selectedText);
+        Properties pending = new Properties();
+        pending.setProperty("version", selectedId);
+        pending.setProperty("origin", "WORKING");
+        pending.setProperty("target", target.identity());
+        pending.setProperty("beforeLocal", store.readWorking().sha256);
+        pending.setProperty("after", SelectStorage.hash(bytes(selectedText)));
+        pending.setProperty("beforeSource", SelectStorage.hash(bytes("source-before")));
+        pending.setProperty("retention", "unlimited");
+        File journal = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(), "select-backups/pending-restore.properties");
+        try (java.io.OutputStream output = Files.newOutputStream(journal.toPath())) { pending.store(output, "fixture"); }
+        assertEquals("LOCAL_RESTORE_REQUIRED", store.inspectPendingRestore(target));
+        LibraryScanner.Item item = new LibraryScanner.Item("characters", "KFM/KFM.def", "KFM", "", "", true);
+        try { RosterStore.setEnabled(storeRoot(store), item, false); fail(); } catch (IOException expected) { }
+        try { store.restoreLoadOnly(selectedId, store.readWorking().sha256, null); fail(); } catch (IOException expected) { }
+        assertEquals("LOCAL_RESTORE_REQUIRED", store.inspectPendingRestore(target));
+        store.completePendingRestore(target);
+        assertArrayEquals(bytes(selectedText), store.readWorking().bytes);
+        assertEquals("NONE", store.inspectPendingRestore(target));
+    }
+    @Test public void pendingExportBlocksLocalEditUntilRecoveryIsInspected() throws Exception {
+        SelectStorage store = storage("before");
+        File journal = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(),
+                "select-backups/pending-export.properties");
+        assertTrue(journal.getParentFile().mkdir());
+        Files.write(journal.toPath(), bytes("pending"));
+        try { store.commitWorking(store.readWorking().sha256, bytes("after"), "edit", null); fail(); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("pending export")); }
+        assertArrayEquals(bytes("before"), store.readWorking().bytes);
     }
     private static File storeRoot(SelectStorage store) throws Exception {
         java.lang.reflect.Field field = SelectStorage.class.getDeclaredField("root");
