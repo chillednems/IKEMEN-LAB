@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_TREE = 100;
     private static final int EXPORT_SELECT = 101;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
+    private static final ExecutorService PREVIEW = Executors.newSingleThreadExecutor();
     private static final String PREFS = "library";
     private static final String KEY_PATH = "active_path";
     private LinearLayout root;
@@ -53,7 +54,7 @@ public final class MainActivity extends Activity {
     private String searchText = "";
     private boolean busy;
     private long lastStickMove;
-    private String previewKey;
+    private volatile String previewKey;
     private Bitmap previewBitmap;
     private String previewReason;
     private boolean previewLoading;
@@ -336,7 +337,8 @@ public final class MainActivity extends Activity {
 
     private void loadPreview(LibraryScanner.Item item, String key) {
         previewLoading = true;
-        IO.execute(() -> {
+        PREVIEW.execute(() -> {
+            if (!key.equals(previewKey)) return;
             Bitmap image = null;
             String reason = null;
             try {
