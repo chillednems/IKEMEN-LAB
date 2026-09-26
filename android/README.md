@@ -2,9 +2,15 @@
 
 IKEMEN Lab browses an unpacked IKEMEN or MUGEN folder, previews supported character and stage artwork, and manages its `select.def` roster. Android 8.0 or newer is required. It does not launch a game.
 
+## Get a prerelease
+
+The current Android prerelease is [0.5.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.5.0). Earlier checkpoints are [0.1.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.1.0), [0.2.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.2.0), [0.3.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.3.0), and [0.4.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.4.0). Install the APK from the version's release page. Release-signed versions use the same package and certificate, so you can install a newer release over an earlier release-signed one. A debug-signed APK requires a one-time uninstall before installing a release-signed APK.
+
+These are Android development checkpoints from `codex/android-library`; `main` has not received the Android app. [Screenshots](screenshots/README.md) show public-safe sample artwork and the visible changes. The [roadmap](ROADMAP.md) distinguishes planned work from released features.
+
 ## Import and browse
 
-1. Choose **Switch folder** and pick the library root containing `chars/` and `stages/`. Allow read and write access if Android offers it. The app copies the folder into its private storage and remembers that library between launches. The picked source is unchanged during import.
+1. Choose **Switch folder** and pick the library root containing `chars/` and `stages/`. Allow read and write access if Android offers it. **In 0.5.0 and earlier, the app copies the entire folder into its private storage.** This may use substantial extra space for large character and stage collections. The app remembers that copy between launches; the picked source is unchanged during import. Directly referencing the selected source without copying `chars/` and `stages/` is planned for the next storage update.
 2. Search or scroll characters and stages. Tap an item once to select it; tap the selected item again to toggle its roster state. On a controller, move focus with the D-pad or left stick and press **A** once to select, then **A** again to toggle. **B** clears the selection or goes back.
 3. Details show name, author, reference, and preview before file paths and roster controls. The list and details scroll separately. Missing roster references remain visible in red with a text warning; a missing entry can be disabled but cannot be enabled until its file is restored.
 
@@ -37,7 +43,9 @@ If the source folder's permission is revoked or you upgrade from an older local-
 
 ## Current limits
 
-Import accepts an unpacked folder rather than a ZIP/RAR/7z archive, with up to 20,000 entries, 8 GB of copied data, and 20 folder levels. Failed imports remove their partial staging copy. Switching folders retains earlier managed copies in private app storage; uninstalling the app removes those copies and their private backups.
+Import accepts an unpacked folder rather than a ZIP/RAR/7z archive, with up to 20,000 entries, 8 GB of copied data, and 20 folder levels. Failed imports remove their partial staging copy. Switching folders retains earlier managed copies in private app storage; uninstalling the app removes those copies and their private backups. If storage is tight, check available space before importing a large collection. Source-folder references without these library copies are planned, but are not in 0.5.0.
+
+On a portrait Android emulator, the navigation bar can overlap the bottom of an export-review panel. Use landscape for export review if the buttons are obscured on your device. Physical Odin 3 behavior has not yet been checked.
 
 Previews support direct PNG and bounded SFF v1 8-bit PCX and SFF v2 indexed or embedded PNG sprites. They are still images: character previews do not animate, and stage previews do not run gameplay, GLB/3D rendering, or every BG effect. Unsupported encodings, missing palettes, oversized or malformed images may be unavailable. Legacy Japanese `.def` metadata uses heuristic decoding and can misread a one-character field. The app does not manage screenpacks, install content into a game, or launch IKEMEN GO.
 
