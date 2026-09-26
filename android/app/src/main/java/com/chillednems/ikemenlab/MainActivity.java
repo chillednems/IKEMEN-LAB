@@ -48,6 +48,7 @@ public final class MainActivity extends Activity {
     private LinearLayout root;
     private LinearLayout list;
     private LinearLayout detail;
+    private Button rosterButton;
     private TextView status;
     private EditText search;
     private File library;
@@ -62,15 +63,17 @@ public final class MainActivity extends Activity {
     private String previewReason;
     private boolean previewLoading;
     private android.window.OnBackInvokedCallback backCallback;
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener libraryChanged = (prefs, key) -> {
+        if (KEY_PATH.equals(key)) runOnUiThread(() -> {
+            if (!isDestroyed()) syncActiveLibrary(prefs.getString(KEY_PATH, null));
+        });
+    };
+
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         applyOrientation();
         String path = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_PATH, null);
-        if (path != null) {
-            File saved = new File(path);
-            File parent = new File(getFilesDir(), "libraries");
-            if (saved.isDirectory() && saved.getParentFile().equals(parent)) library = saved;
-        }
+        library = managedLibrary(path);
         if (state != null) {
             searchText = state.getString("search", "");
             restoreSelection = state.getString("selection");
@@ -80,12 +83,14 @@ public final class MainActivity extends Activity {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
         }
         buildScreen();
-        refreshCatalog();
+        getSharedPreferences(PREFS, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(libraryChanged);
+        syncActiveLibrary(getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_PATH, null));
     }
 
     @Override protected void onDestroy() {
         if (Build.VERSION.SDK_INT >= 33 && backCallback != null)
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+        getSharedPreferences(PREFS, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(libraryChanged);
         super.onDestroy();
     }
 
@@ -224,6 +229,32 @@ public final class MainActivity extends Activity {
 
     private void showStatus(String message) { if (status != null) status.setText(message); }
 
+    private File managedLibrary(String path) {
+        if (path == null) return null;
+        File saved = new File(path);
+        File parent = new File(getFilesDir(), "libraries");
+        return saved.isDirectory() && parent.equals(saved.getParentFile()) ? saved : null;
+    }
+
+    private void syncActiveLibrary(String path) {
+        File active = managedLibrary(path);
+        if (active == null ? library == null : active.equals(library)) {
+            if (active != null && catalog == null) refreshCatalog();
+            return;
+        }
+        library = active;
+        catalog = null;
+        selected = null;
+        restoreSelection = null;
+        previewKey = null;
+        previewBitmap = null;
+        previewReason = null;
+        previewLoading = false;
+        renderList();
+        showStatus(summary());
+        refreshCatalog();
+    }
+
     private void pickFolder() {
         if (busy) return;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -344,7 +375,7 @@ public final class MainActivity extends Activity {
         if (detail == null) return;
         detail.removeAllViews();
         detail.addView(label("Details", 20, true));
-        if (selected == null) { detail.addView(label("Select a character or stage. Use touch, D-pad, or left stick; A selects and B goes back.", 15, false)); return; }
+        if (selected == null) { rosterButton = null; detail.addView(label("Select a character or stage. Use touch, D-pad, or left stick; A selects and B goes back.", 15, false)); return; }
         detail.addView(label(selected.name, 21, true));
         detail.addView(label("Author: " + selected.author, 16, false));
         detail.addView(label("Reference: " + selected.reference, 14, false));
@@ -365,7 +396,8 @@ public final class MainActivity extends Activity {
         }
         detail.addView(label("DEF: " + selected.file, 13, false));
         detail.addView(label("Roster: " + (selected.enabled == null ? "Not listed" : selected.enabled ? "Enabled" : "Disabled"), 16, false));
-        detail.addView(button(selected.enabled != null && selected.enabled ? "Disable in roster" : "Enable in roster", () -> toggleSelected(selected.enabled == null || !selected.enabled)));
+        rosterButton = button(selected.enabled != null && selected.enabled ? "Disable in roster" : "Enable in roster", () -> toggleSelected(selected.enabled == null || !selected.enabled));
+        detail.addView(rosterButton);
     }
 
     private void loadPreview(LibraryScanner.Item item, String key) {
@@ -395,7 +427,9 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (isDestroyed() || !key.equals(previewKey)) return;
                 previewBitmap = result; previewReason = message; previewLoading = false;
+                boolean restoreRosterFocus = rosterButton != null && rosterButton.hasFocus();
                 renderDetail();
+                if (restoreRosterFocus && rosterButton != null) rosterButton.requestFocus();
             });
         });
     }
