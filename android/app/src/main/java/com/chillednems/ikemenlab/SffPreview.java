@@ -2,7 +2,6 @@ package com.chillednems.ikemenlab;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -32,9 +31,19 @@ public final class SffPreview {
 
     public static Result extract(File file, boolean portrait, int stageGroup, int stageImage) {
         if (file == null || !file.isFile()) return no("No SFF artwork file");
-        if (file.length() > MAX_FILE_BYTES) return no("SFF exceeds 64 MB preview limit");
-        try { return extract(Files.readAllBytes(file.toPath()), portrait, stageGroup, stageImage); }
-        catch (IOException error) { return no("Could not read SFF artwork"); }
+        int[][] choices = portrait ? new int[][] {{9000, 1}, {9000, 2}, {9000, 0}} :
+                new int[][] {{stageGroup, stageImage}, {9000, 1}, {9000, 0}, {0, 0}};
+        try (PreviewSff archive = new PreviewSff(file)) {
+            IOException last = null;
+            for (int[] choice : choices) {
+                if (!archive.has(choice[0], choice[1])) continue;
+                try {
+                    PreviewSff.Sprite sprite = archive.sprite(choice[0], choice[1]);
+                    return new Result(sprite.width, sprite.height, sprite.argb, null, null);
+                } catch (IOException unsupported) { last = unsupported; }
+            }
+            return no(last == null ? "No requested sprite in SFF" : last.getMessage());
+        } catch (IOException error) { return no(error.getMessage()); }
     }
 
     public static Result extract(byte[] data, boolean portrait, int stageGroup, int stageImage) {
