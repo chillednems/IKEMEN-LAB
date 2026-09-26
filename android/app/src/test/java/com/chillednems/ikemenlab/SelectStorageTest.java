@@ -27,13 +27,15 @@ public final class SelectStorageTest {
         Files.write(new File(data, "select.def").toPath(), bytes(initial));
         return new SelectStorage(root);
     }
-    private static final class Fake implements SelectStorage.External {
+    private static class Fake implements SelectStorage.External {
         byte[] contents, backup;
+        String backupIdentity = "source:fake://data/select.def";
         final Map<String, byte[]> versions = new LinkedHashMap<>();
         int writes, backupCalls;
         boolean partialFailure, rollbackFailure, badReadback, outsideEdit, changeAfterBackup, backupFailure;
         Fake(String value) { contents = bytes(value); }
         @Override public String identity() { return "fake://data/select.def"; }
+        @Override public String backupIdentity() { return backupIdentity; }
         @Override public byte[] read() {
             if (outsideEdit) { outsideEdit = false; contents = bytes("outside"); }
             return contents.clone();
@@ -169,6 +171,41 @@ public final class SelectStorageTest {
         assertEquals(0, target.writes);
         assertArrayEquals(bytes("outside"), target.contents);
     }
+    @Test public void reviewedNoChangeExportAnywayStillBacksUpAndWritesExactSource() throws Exception {
+        SelectStorage store = storage("same");
+        Fake target = new Fake("same");
+        SelectStorage.ExportPlan plan = store.planExport(target, store.readWorking().sha256);
+        assertFalse(store.executeExport(target, plan).changed);
+        assertEquals(0, target.backupCalls);
+        SelectStorage.ExportResult forced = store.executeExportAnyway(target, plan, null);
+        assertTrue(forced.changed);
+        assertEquals(1, target.backupCalls);
+        assertEquals(1, target.writes);
+        assertArrayEquals(bytes("same"), target.backup);
+        assertArrayEquals(bytes("same"), target.contents);
+        assertEquals("NONE", store.inspectPending(target));
+    }
+    @Test public void reviewedNoChangeExportAnywayRejectsChangedSourceBeforeBackup() throws Exception {
+        SelectStorage store = storage("same");
+        Fake target = new Fake("same");
+        SelectStorage.ExportPlan plan = store.planExport(target, store.readWorking().sha256);
+        target.contents = bytes("outside");
+        try { store.executeExportAnyway(target, plan, null); fail(); } catch (IOException expected) { }
+        assertEquals(0, target.backupCalls);
+        assertEquals(0, target.writes);
+        assertArrayEquals(bytes("outside"), target.contents);
+    }
+    @Test public void changedBackupDestinationInvalidatesReviewedPlanBeforeWrite() throws Exception {
+        SelectStorage store = storage("working");
+        Fake target = new Fake("source");
+        SelectStorage.ExportPlan plan = store.planExport(target, store.readWorking().sha256);
+        target.backupIdentity = "app:other";
+        try { store.executeExport(target, plan); fail(); } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("Backup destination changed"));
+        }
+        assertEquals(0, target.backupCalls);
+        assertEquals(0, target.writes);
+    }
     @Test public void normalExportPlanRejectsWorkingChangeEvenWhenOldHashIsBackedUp() throws Exception {
         SelectStorage store = storage("working");
         Fake target = new Fake("source");
@@ -297,6 +334,35 @@ public final class SelectStorageTest {
         assertEquals("LOCAL_RESTORE_REQUIRED", store.inspectPendingRestore(target));
         store.completePendingRestore(target);
         assertArrayEquals(bytes(selectedText), store.readWorking().bytes);
+        assertEquals("NONE", store.inspectPendingRestore(target));
+    }
+    @Test public void legacyPendingSourceRestoreReadsOriginalSourceStoreAfterPolicyChange() throws Exception {
+        SelectStorage store = storage("local-before");
+        String oldId = "22222222-2222-2222-2222-222222222222";
+        byte[] chosen = bytes("restored-old-source-backup");
+        Fake target = new Fake("restored-old-source-backup") {
+            @Override public byte[] readBackup(String id, String storeIdentity) throws IOException {
+                assertEquals(oldId, id);
+                assertEquals("source:" + identity(), storeIdentity);
+                return chosen.clone();
+            }
+        };
+        target.backupIdentity = "policy:7:app:changed";
+        store.listVersions();
+        Properties pending = new Properties();
+        pending.setProperty("version", oldId);
+        pending.setProperty("origin", "SOURCE");
+        pending.setProperty("target", target.identity());
+        pending.setProperty("beforeLocal", store.readWorking().sha256);
+        pending.setProperty("after", SelectStorage.hash(chosen));
+        pending.setProperty("beforeSource", SelectStorage.hash(bytes("older-source")));
+        pending.setProperty("retention", "unlimited");
+        File journal = new File(RosterStore.selectFile(storeRoot(store)).getParentFile(),
+                "select-backups/pending-restore.properties");
+        try (java.io.OutputStream output = Files.newOutputStream(journal.toPath())) { pending.store(output, "v0.5 fixture"); }
+        assertEquals("LOCAL_RESTORE_REQUIRED", store.inspectPendingRestore(target));
+        store.completePendingRestore(target);
+        assertArrayEquals(chosen, store.readWorking().bytes);
         assertEquals("NONE", store.inspectPendingRestore(target));
     }
     @Test public void pendingExportBlocksLocalEditUntilRecoveryIsInspected() throws Exception {

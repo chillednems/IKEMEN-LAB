@@ -20,13 +20,23 @@ import java.util.Properties;
 public final class SafSelectTarget implements SelectStorage.External {
     private static final String MIME_DIR = DocumentsContract.Document.MIME_TYPE_DIR;
     private final ContentResolver resolver;
-    private final Uri tree, data, select;
+    private final Uri tree, data, select, backupTree;
+    private final boolean customBackup;
     private final String identity;
 
     public SafSelectTarget(ContentResolver resolver, Uri tree) throws IOException {
+        this(resolver, tree, null);
+    }
+    public SafSelectTarget(ContentResolver resolver, Uri tree, Uri customBackupTree) throws IOException {
         this.resolver = resolver; this.tree = tree;
+        this.backupTree = customBackupTree == null ? tree : customBackupTree;
+        this.customBackup = customBackupTree != null;
         if (!DocumentsContract.isTreeUri(tree)) throw new IOException("Source is not a folder");
         requireGrant(resolver, tree, false);
+        if (customBackup) {
+            if (!DocumentsContract.isTreeUri(backupTree)) throw new IOException("Custom backup location is not a folder");
+            requireGrant(resolver, backupTree, false);
+        }
         Uri root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
         data = exactChild(root, "data", true);
         if (data == null) throw new IOException("Source has no data folder");
@@ -44,6 +54,13 @@ public final class SafSelectTarget implements SelectStorage.External {
                 : "Source folder read access was revoked");
     }
     @Override public String identity() { return identity; }
+    @Override public String backupIdentity() {
+        return customBackup ? "custom:" + backupTree + ":" + customNamespace() : "source:" + identity;
+    }
+    @Override public String backupLabel() {
+        return customBackup ? "Custom backup folder " + backupTree.getLastPathSegment()
+                : "Source data/select-backups";
+    }
     @Override public byte[] read() throws IOException {
         requireGrant(resolver, tree, false);
         return readDocument(select);
@@ -58,7 +75,7 @@ public final class SafSelectTarget implements SelectStorage.External {
         } catch (SecurityException failure) { throw new IOException("Source write access denied", failure); }
     }
     @Override public String backup(byte[] preimage, String transactionId) throws IOException {
-        requireGrant(resolver, tree, true);
+        requireGrant(resolver, backupTree, true);
         Uri folder = backupFolder(true);
         if (folder == null) throw new IOException("Could not create source backup directory");
         String name = "select.def.backup." + transactionId + ".bak";
@@ -105,11 +122,11 @@ public final class SafSelectTarget implements SelectStorage.External {
         return backup.toString();
     }
     @Override public List<SelectStorage.Version> listBackups() throws IOException {
-        requireGrant(resolver, tree, false);
+        requireGrant(resolver, backupTree, false);
         Uri folder = backupFolder(false);
         List<SelectStorage.Version> result = new ArrayList<>();
         if (folder == null) return result;
-        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getDocumentId(folder));
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(backupTree, DocumentsContract.getDocumentId(folder));
         String[] projection = { DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME };
         try (Cursor cursor = resolver.query(children, projection, null, null, null)) {
             if (cursor == null) throw new IOException("Folder provider did not return backups");
@@ -117,9 +134,9 @@ public final class SafSelectTarget implements SelectStorage.External {
                 String name = cursor.getString(1);
                 if (name == null || !name.matches("select\\.def\\.backup\\.[0-9a-fA-F-]{36}\\.properties")) continue;
                 String id = name.substring("select.def.backup.".length(), name.length() - ".properties".length());
-                Uri body = exactChild(folder, "select.def.backup." + id + ".bak", false);
+                Uri body = exactChild(backupTree, folder, "select.def.backup." + id + ".bak", false);
                 if (body == null) continue;
-                Uri manifest = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
+                Uri manifest = DocumentsContract.buildDocumentUriUsingTree(backupTree, cursor.getString(0));
                 Properties p = new Properties();
                 try {
                     p.load(new java.io.ByteArrayInputStream(readDocument(manifest)));
@@ -137,7 +154,7 @@ public final class SafSelectTarget implements SelectStorage.External {
         Uri folder = backupFolder(false);
         if (folder == null) throw new IOException("Source backup folder missing");
         for (SelectStorage.Version version : listBackups()) if (version.id.equals(id)) {
-            Uri body = exactChild(folder, "select.def.backup." + id + ".bak", false);
+            Uri body = exactChild(backupTree, folder, "select.def.backup." + id + ".bak", false);
             byte[] selected = readDocument(body);
             if (!SelectStorage.hash(selected).equals(version.sha256)) throw new IOException("Source backup changed");
             return selected;
@@ -147,21 +164,35 @@ public final class SafSelectTarget implements SelectStorage.External {
     @Override public void pruneBackups(Integer retention, String protectedVersionId) throws IOException {
         if (retention == null) return;
         if (retention < 1) throw new IOException("Retention must be positive");
-        requireGrant(resolver, tree, true);
+        requireGrant(resolver, backupTree, true);
         Uri folder = backupFolder(false);
         if (folder == null) return;
         List<SelectStorage.Version> all = listBackups();
         for (int i = retention; i < all.size(); i++) {
             String id = all.get(i).id;
             if (id.equals(protectedVersionId)) continue;
-            Uri metadata = exactChild(folder, "select.def.backup." + id + ".properties", false);
-            Uri body = exactChild(folder, "select.def.backup." + id + ".bak", false);
+            Uri metadata = exactChild(backupTree, folder, "select.def.backup." + id + ".properties", false);
+            Uri body = exactChild(backupTree, folder, "select.def.backup." + id + ".bak", false);
             if (metadata == null || body == null) continue;
             if (!DocumentsContract.deleteDocument(resolver, metadata)) throw new IOException("Could not prune source backup metadata");
             if (!DocumentsContract.deleteDocument(resolver, body)) throw new IOException("Could not prune source backup bytes");
         }
     }
     private Uri backupFolder(boolean create) throws IOException {
+        if (customBackup) {
+            try {
+                Uri selectedFolder = DocumentsContract.buildDocumentUriUsingTree(backupTree,
+                        DocumentsContract.getTreeDocumentId(backupTree));
+                if (!MIME_DIR.equals(documentMime(selectedFolder))) throw new IOException("Custom backup location is not a folder");
+                String namespace = customNamespace();
+                Uri folder = exactChild(backupTree, selectedFolder, namespace, true);
+                if (folder == null && create) {
+                    folder = DocumentsContract.createDocument(resolver, selectedFolder, MIME_DIR, namespace);
+                    if (folder != null) ManagedBackupFormat.requireExactName(namespace, displayName(folder));
+                }
+                return folder;
+            } catch (RuntimeException invalid) { throw new IOException("Custom backup folder is unavailable", invalid); }
+        }
         Uri folder = exactChild(data, "select-backups", true);
         if (folder == null && create) {
             try { folder = DocumentsContract.createDocument(resolver, data, MIME_DIR, "select-backups"); }
@@ -169,6 +200,19 @@ public final class SafSelectTarget implements SelectStorage.External {
             if (folder != null) ManagedBackupFormat.requireExactName("select-backups", displayName(folder));
         }
         return folder;
+    }
+    private String customNamespace() {
+        return customNamespaceFor(identity);
+    }
+    static String customNamespaceFor(String sourceIdentity) {
+        return "ikemen-select-" + SelectStorage.hash(sourceIdentity.getBytes(java.nio.charset.StandardCharsets.UTF_8)).substring(0, 24);
+    }
+    private String documentMime(Uri document) throws IOException {
+        try (Cursor cursor = resolver.query(document,
+                new String[] { DocumentsContract.Document.COLUMN_MIME_TYPE }, null, null, null)) {
+            if (cursor == null || !cursor.moveToFirst()) throw new IOException("Backup folder is unavailable");
+            return cursor.getString(0);
+        } catch (SecurityException denied) { throw new IOException("Backup folder access denied", denied); }
     }
     private String displayName(Uri document) throws IOException {
         try (Cursor cursor = resolver.query(document,
@@ -192,8 +236,11 @@ public final class SafSelectTarget implements SelectStorage.External {
         } catch (SecurityException failure) { throw new IOException("Source read access denied", failure); }
     }
     private Uri exactChild(Uri parent, String name, boolean directory) throws IOException {
+        return exactChild(tree, parent, name, directory);
+    }
+    private Uri exactChild(Uri inTree, Uri parent, String name, boolean directory) throws IOException {
         String parentId = DocumentsContract.getDocumentId(parent);
-        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(inTree, parentId);
         String[] projection = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE };
         List<String> matches = new ArrayList<>();
@@ -206,6 +253,6 @@ public final class SafSelectTarget implements SelectStorage.External {
             }
         } catch (SecurityException failure) { throw new IOException("Source folder access denied", failure); }
         if (matches.size() > 1) throw new IOException("Ambiguous source documents named " + name);
-        return matches.isEmpty() ? null : DocumentsContract.buildDocumentUriUsingTree(tree, matches.get(0));
+        return matches.isEmpty() ? null : DocumentsContract.buildDocumentUriUsingTree(inTree, matches.get(0));
     }
 }

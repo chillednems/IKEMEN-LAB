@@ -52,15 +52,32 @@ public final class SelectStorage {
         List<Version> listBackups() throws IOException;
         byte[] readBackup(String versionId) throws IOException;
         void pruneBackups(Integer retention, String protectedVersionId) throws IOException;
+        default String backupIdentity() throws IOException { return "source:" + identity(); }
+        default String backupLabel() throws IOException { return "data/select-backups beside " + identity(); }
+        default List<BackupRef> listExternalBackups() throws IOException {
+            List<BackupRef> result = new ArrayList<>();
+            for (Version version : listBackups())
+                result.add(new BackupRef(BackupRef.Origin.SOURCE, version, backupIdentity(), backupLabel()));
+            return result;
+        }
+        default byte[] readBackup(BackupRef ref) throws IOException {
+            return readBackup(ref.id, ref.storeIdentity);
+        }
+        default byte[] readBackup(String versionId, String storeIdentity) throws IOException {
+            if (!backupIdentity().equals(storeIdentity)) throw new IOException("Backup location changed; select it again");
+            return readBackup(versionId);
+        }
     }
     public static final class BackupRef {
         public enum Origin { WORKING, SOURCE }
         public final Origin origin;
-        public final String id, sha256;
+        public final String id, sha256, storeIdentity, storeLabel;
         public final long createdAt, byteCount;
-        BackupRef(Origin origin, Version version) {
+        BackupRef(Origin origin, Version version) { this(origin, version, "working", "App working undo and recovery"); }
+        BackupRef(Origin origin, Version version, String storeIdentity, String storeLabel) {
             this.origin = origin; this.id = version.id; this.sha256 = version.sha256;
             this.createdAt = version.createdAt; this.byteCount = version.byteCount;
+            this.storeIdentity = storeIdentity; this.storeLabel = storeLabel;
         }
     }
     public static final class ExportPlan {
@@ -68,14 +85,17 @@ public final class SelectStorage {
         public final byte[] replacement;
         public final BackupRef selectedBackup;
         public final List<RosterDiagnostics.Warning> missingWarnings;
-        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, LibraryFiles.Node root) throws IOException {
-            this(targetIdentity, replacement, source, root, null);
+        public final String backupIdentity;
+        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, LibraryFiles.Node root,
+                   String backupIdentity, String backupDestination) throws IOException {
+            this(targetIdentity, replacement, source, root, null, backupIdentity, backupDestination);
         }
-        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, LibraryFiles.Node root, BackupRef selectedBackup) throws IOException {
+        ExportPlan(String targetIdentity, byte[] replacement, byte[] source, LibraryFiles.Node root,
+                   BackupRef selectedBackup, String backupIdentity, String backupDestination) throws IOException {
             this.targetIdentity = targetIdentity; this.replacement = replacement.clone();
             this.workingHash = hash(replacement); this.sourceHash = hash(source);
             this.selectedBackup = selectedBackup;
-            this.backupDestination = "data/select-backups beside " + targetIdentity;
+            this.backupIdentity = backupIdentity; this.backupDestination = backupDestination;
             this.missingWarnings = RosterDiagnostics.scan(root, replacement);
         }
     }
@@ -143,12 +163,12 @@ public final class SelectStorage {
     public List<BackupRef> listAllBackups(External target) throws IOException {
         List<BackupRef> result = new ArrayList<>();
         for (Version version : listVersions()) result.add(new BackupRef(BackupRef.Origin.WORKING, version));
-        if (target != null) for (Version version : target.listBackups()) result.add(new BackupRef(BackupRef.Origin.SOURCE, version));
+        if (target != null) result.addAll(target.listExternalBackups());
         result.sort(Comparator.comparingLong((BackupRef ref) -> ref.createdAt).reversed());
         return result;
     }
     private byte[] readBackup(External target, BackupRef ref) throws IOException {
-        byte[] selected = ref.origin == BackupRef.Origin.WORKING ? readVersion(ref.id) : target.readBackup(ref.id);
+        byte[] selected = ref.origin == BackupRef.Origin.WORKING ? readVersion(ref.id) : target.readBackup(ref);
         if (!hash(selected).equals(ref.sha256)) throw new IOException("Selected backup failed verification");
         return selected;
     }
@@ -160,7 +180,8 @@ public final class SelectStorage {
     public ExportPlan planExport(External target, String expectedWorkingHash) throws IOException {
         Snapshot working = readWorking();
         if (!working.sha256.equals(expectedWorkingHash)) throw new IOException("Working select.def changed; refresh preview");
-        return new ExportPlan(target.identity(), working.bytes, checked(target.read()), diagnosticRoot);
+        return new ExportPlan(target.identity(), working.bytes, checked(target.read()), diagnosticRoot,
+                target.backupIdentity(), target.backupLabel());
     }
     /** Restore preview uses an immutable version as source; the working copy is handled separately. */
     public ExportPlan planRestoreSource(External target, String versionId) throws IOException {
@@ -169,7 +190,8 @@ public final class SelectStorage {
         throw new IOException("Selected backup is missing");
     }
     public ExportPlan planRestoreSource(External target, BackupRef ref) throws IOException {
-        return new ExportPlan(target.identity(), readBackup(target, ref), checked(target.read()), diagnosticRoot, ref);
+        return new ExportPlan(target.identity(), readBackup(target, ref), checked(target.read()), diagnosticRoot,
+                ref, target.backupIdentity(), target.backupLabel());
     }
     public static final class RestoreResult {
         public final ExportResult source;
@@ -191,11 +213,13 @@ public final class SelectStorage {
         if (!hash(chosen).equals(plan.workingHash) || !target.identity().equals(plan.targetIdentity))
             throw new IOException("Restore selection changed; refresh preview");
         if (plan.selectedBackup == null || !plan.selectedBackup.id.equals(selectedBackup.id)
-                || plan.selectedBackup.origin != selectedBackup.origin)
+                || plan.selectedBackup.origin != selectedBackup.origin
+                || !plan.selectedBackup.storeIdentity.equals(selectedBackup.storeIdentity))
             throw new IOException("Restore backup changed; refresh preview");
         if (!readWorking().sha256.equals(expectedWorkingHash)) throw new IOException("Working select.def changed");
         Properties pending = new Properties();
         pending.setProperty("version", selectedBackup.id); pending.setProperty("origin", selectedBackup.origin.name());
+        pending.setProperty("storeIdentity", selectedBackup.storeIdentity);
         pending.setProperty("target", plan.targetIdentity);
         pending.setProperty("beforeLocal", expectedWorkingHash); pending.setProperty("after", plan.workingHash);
         pending.setProperty("beforeSource", plan.sourceHash);
@@ -205,7 +229,7 @@ public final class SelectStorage {
             writeProperties(pendingRestore(), pending);
         }
         try {
-            ExportResult source = executeExport(target, plan, true, retention);
+            ExportResult source = executeExport(target, plan, true, false, retention);
             CommitResult working = commitWorking(expectedWorkingHash, chosen, "restore-source:" + selectedBackup.id,
                     retention, selectedBackup.origin == BackupRef.Origin.WORKING ? selectedBackup.id : null, true);
             Files.deleteIfExists(pendingRestore().toPath());
@@ -245,7 +269,8 @@ public final class SelectStorage {
                 : Integer.parseInt(pending.getProperty("retention"));
         BackupRef.Origin origin = BackupRef.Origin.valueOf(pending.getProperty("origin"));
         String id = pending.getProperty("version");
-        byte[] chosen = origin == BackupRef.Origin.WORKING ? readVersion(id) : target.readBackup(id);
+        byte[] chosen = origin == BackupRef.Origin.WORKING ? readVersion(id)
+                : target.readBackup(id, pending.getProperty("storeIdentity", "source:" + target.identity()));
         if (!hash(chosen).equals(pending.getProperty("after"))) throw new IOException("Restore backup changed");
         CommitResult result = commitWorking(pending.getProperty("beforeLocal"), chosen,
                 "restore-source:" + id, retention, origin == BackupRef.Origin.WORKING ? id : null, true);
@@ -277,7 +302,7 @@ public final class SelectStorage {
             String transaction = UUID.randomUUID().toString();
             String sourceLocation = target.backup(source, transaction);
             if (sourceLocation == null || sourceLocation.isEmpty()
-                    || !MessageDigest.isEqual(checked(target.readBackup(transaction)), source))
+                    || !MessageDigest.isEqual(checked(target.readBackup(transaction, target.backupIdentity())), source))
                 throw new IOException("Current source backup failed verification");
             Version localVersion = saveVersion(working, "abandoned source restore", "working");
             if (localVersion == null || !workingHash.equals(localVersion.sha256))
@@ -291,15 +316,24 @@ public final class SelectStorage {
     }
     /** Generic document providers cannot promise crash-atomic replacement. */
     public synchronized ExportResult executeExport(External target, ExportPlan plan) throws IOException {
-        return executeExport(target, plan, false, null);
+        return executeExport(target, plan, false, false, null);
     }
     public synchronized ExportResult executeExport(External target, ExportPlan plan, Integer retention) throws IOException {
         validateRetention(retention);
-        return executeExport(target, plan, false, retention);
+        return executeExport(target, plan, false, false, retention);
+    }
+    /** Explicit force is accepted only for a reviewed no-change export. */
+    public synchronized ExportResult executeExportAnyway(External target, ExportPlan plan, Integer retention) throws IOException {
+        validateRetention(retention);
+        if (!plan.sourceHash.equals(plan.workingHash)) throw new IOException("Export anyway is only for a reviewed no-change export");
+        return executeExport(target, plan, false, true, retention);
     }
     private synchronized ExportResult executeExport(External target, ExportPlan plan, boolean restoring,
+                                                    boolean forceNoChange,
                                                     Integer retention) throws IOException {
         if (!target.identity().equals(plan.targetIdentity)) throw new IOException("Export destination changed");
+        if (!target.backupIdentity().equals(plan.backupIdentity))
+            throw new IOException("Backup destination changed; review export again");
         // A normal export must still match the working copy. A restore plan can use an older immutable version.
         if (!restoring && !readWorking().sha256.equals(plan.workingHash))
             throw new IOException("Working select.def changed; refresh export preview");
@@ -308,7 +342,7 @@ public final class SelectStorage {
             throw new IOException("Selected restore version changed; refresh restore preview");
         byte[] old = checked(target.read());
         if (!hash(old).equals(plan.sourceHash)) throw new IOException("Destination changed; refresh preview");
-        if (MessageDigest.isEqual(old, plan.replacement))
+        if (!forceNoChange && MessageDigest.isEqual(old, plan.replacement))
             return new ExportResult(false, plan.targetIdentity, plan.workingHash, null);
         try (Locked ignored = lock()) {
             if (pendingJournal().exists()) throw new IOException("Resolve pending export first");
@@ -509,7 +543,7 @@ public final class SelectStorage {
         if (ref.origin == BackupRef.Origin.WORKING) {
             if (loadVersion(ref.id) == null) throw new IOException("Selected backup changed");
             bytes = readLimited(new File(versions, ref.id + ".bin"));
-        } else bytes = target.readBackup(ref.id);
+        } else bytes = target.readBackup(ref);
         if (!hash(bytes).equals(ref.sha256)) throw new IOException("Selected backup changed");
         return bytes;
     }
