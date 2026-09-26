@@ -51,6 +51,7 @@ public final class MainActivity extends Activity {
     private static final String KEY_PATH = "active_path";
     private static final String KEY_ORIENTATION = "orientation";
     private static final String KEY_RETENTION = "backup_retention";
+    private static final String KEY_PREVIEW_MODE = "character_preview_mode";
     private LinearLayout root;
     private FrameLayout screenFrame;
     private LinearLayout activeSheet;
@@ -75,6 +76,8 @@ public final class MainActivity extends Activity {
     private volatile String previewKey;
     private Bitmap previewBitmap;
     private String previewReason;
+    private String previewSource;
+    private String previewNotice;
     private boolean previewLoading;
     private android.window.OnBackInvokedCallback backCallback;
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener libraryChanged = (prefs, key) -> {
@@ -256,8 +259,33 @@ public final class MainActivity extends Activity {
 
     private void showSettings() {
         if (busy) return;
-        showActionSheet("Settings", new String[]{"Screen orientation", "Backups to keep", "Reconnect source folder"},
-                new Runnable[]{this::showOrientationSetting, this::showRetentionSetting, this::reconnectSource});
+        showActionSheet("Settings", new String[]{"Character preview", "Screen orientation", "Backups to keep", "Reconnect source folder"},
+                new Runnable[]{this::showPreviewSetting, this::showOrientationSetting, this::showRetentionSetting, this::reconnectSource});
+    }
+
+    private CharacterPreview.Mode previewMode() {
+        return PreviewChoice.fromPreference(getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_PREVIEW_MODE, null));
+    }
+
+    private void showPreviewSetting() {
+        showActionSheet("Character preview · " + PreviewChoice.label(previewMode()),
+                new String[]{"Neutral stance (default)", "Portrait", "Neutral over portrait"},
+                new Runnable[]{() -> choosePreviewMode(CharacterPreview.Mode.NEUTRAL),
+                        () -> choosePreviewMode(CharacterPreview.Mode.PORTRAIT),
+                        () -> choosePreviewMode(CharacterPreview.Mode.NEUTRAL_OVER_PORTRAIT)});
+    }
+
+    private void choosePreviewMode(CharacterPreview.Mode mode) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_PREVIEW_MODE, mode.name()).apply();
+        previewKey = null;
+        previewBitmap = null;
+        previewReason = null;
+        previewSource = null;
+        previewNotice = null;
+        previewLoading = false;
+        renderDetail();
+        showStatus("Character preview: " + PreviewChoice.label(mode) + ".");
     }
 
     private void showRetentionSetting() {
@@ -753,6 +781,8 @@ public final class MainActivity extends Activity {
         previewKey = null;
         previewBitmap = null;
         previewReason = null;
+        previewSource = null;
+        previewNotice = null;
         previewLoading = false;
         renderList();
         showStatus(summary());
@@ -950,10 +980,13 @@ public final class MainActivity extends Activity {
         detail.addView(label(selected.name, 21, true));
         detail.addView(label("Author: " + selected.author, 16, false));
         detail.addView(label("Reference: " + selected.reference, 14, false));
-        detail.addView(label(selected.kind.equals("characters") ? "Character portrait" : "Stage artwork sprite", 16, true));
-        String key = selected.kind + "|" + selected.reference + "|" + selected.previewFile;
+        CharacterPreview.Mode mode = previewMode();
+        detail.addView(label(selected.kind.equals("characters")
+                ? "Character · " + PreviewChoice.label(mode) : "Stage scene", 16, true));
+        String key = PreviewChoice.key(library, selected, mode);
         if (!key.equals(previewKey)) {
-            previewKey = key; previewBitmap = null; previewReason = null; previewLoading = false;
+            previewKey = key; previewBitmap = null; previewReason = null;
+            previewSource = null; previewNotice = null; previewLoading = false;
         }
         if (previewBitmap != null) {
             ImageView image = new ImageView(this);
@@ -961,9 +994,11 @@ public final class MainActivity extends Activity {
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setContentDescription(selected.name + " artwork preview");
             detail.addView(image, new LinearLayout.LayoutParams(-1, dp(210)));
+            if (previewSource != null) detail.addView(label("Source: " + previewSource, 13, false));
+            if (previewNotice != null) detail.addView(label(previewNotice, 13, false));
         } else {
             detail.addView(label(previewReason == null ? "Loading artwork preview…" : "Preview unavailable: " + previewReason, 14, false));
-            if (!previewLoading && previewReason == null) loadPreview(selected, key);
+            if (!previewLoading && previewReason == null) loadPreview(selected, key, mode);
         }
         if (selected.warning != null) {
             TextView warning = label("MISSING: " + selected.warning + ". Enable is blocked until the referenced file is restored.", 16, true);
@@ -979,33 +1014,82 @@ public final class MainActivity extends Activity {
         detail.addView(rosterButton);
     }
 
-    private void loadPreview(LibraryScanner.Item item, String key) {
+    private static final class DisplayPreview {
+        final Bitmap bitmap;
+        final String source, notice;
+        DisplayPreview(Bitmap bitmap, String source, String notice) {
+            this.bitmap = bitmap; this.source = source; this.notice = notice;
+        }
+    }
+
+    private static DisplayPreview fromFrame(PreviewFrame frame, String fallbackNotice) {
+        String notice = frame.notice;
+        if (fallbackNotice != null) notice = notice == null ? fallbackNotice : fallbackNotice + ". " + notice;
+        return new DisplayPreview(Bitmap.createBitmap(frame.argb, frame.width, frame.height, Bitmap.Config.ARGB_8888),
+                frame.source, notice);
+    }
+
+    private static DisplayPreview legacyArtwork(LibraryScanner.Item item, String notice) throws IOException {
+        if (item.previewFile == null) throw new IOException("No supported artwork file found");
+        File file = new File(item.previewFile);
+        Bitmap image;
+        String source;
+        if (file.getName().toLowerCase(Locale.ROOT).endsWith(".png")) {
+            image = file.length() <= 64 * 1024 * 1024 ? decodeBoundedPng(Files.readAllBytes(file.toPath())) : null;
+            source = "PNG thumbnail";
+        } else {
+            SffPreview.Result preview = SffPreview.extract(file, item.kind.equals("characters"),
+                    item.previewGroup, item.previewImage);
+            if (!preview.available()) throw new IOException(preview.unavailable);
+            image = preview.argb != null
+                    ? Bitmap.createBitmap(preview.argb, preview.width, preview.height, Bitmap.Config.ARGB_8888)
+                    : decodeBoundedPng(preview.png);
+            source = "SFF sprite thumbnail";
+        }
+        if (image == null) throw new IOException("Thumbnail is malformed or exceeds preview limit");
+        return new DisplayPreview(image, source, notice);
+    }
+
+    private static DisplayPreview renderArtwork(LibraryScanner.Item item, CharacterPreview.Mode mode) throws IOException {
+        if (item.file == null) throw new IOException("Referenced DEF is missing");
+        File def = new File(item.file);
+        if (!def.isFile()) throw new IOException("Referenced DEF is missing");
+        if (!item.kind.equals("characters")) {
+            try { return fromFrame(StagePreview.render(def, 400, 240), null); }
+            catch (IOException sceneUnavailable) {
+                return legacyArtwork(item, "Full stage scene unavailable; showing a thumbnail");
+            }
+        }
+        try { return fromFrame(CharacterPreview.render(def, mode, 400, 240), null); }
+        catch (IOException requestedUnavailable) {
+            CharacterPreview.Mode alternative = mode == CharacterPreview.Mode.PORTRAIT
+                    ? CharacterPreview.Mode.NEUTRAL : CharacterPreview.Mode.PORTRAIT;
+            try {
+                return fromFrame(CharacterPreview.render(def, alternative, 400, 240),
+                        PreviewChoice.label(mode) + " unavailable; showing " + PreviewChoice.label(alternative));
+            } catch (IOException alternativeUnavailable) {
+                return legacyArtwork(item, PreviewChoice.label(mode) + " unavailable; showing a thumbnail");
+            }
+        }
+    }
+
+    private void loadPreview(LibraryScanner.Item item, String key, CharacterPreview.Mode mode) {
         previewLoading = true;
         PREVIEW.execute(() -> {
             if (!key.equals(previewKey)) return;
-            Bitmap image = null;
+            DisplayPreview rendered = null;
             String reason = null;
-            try {
-                if (item.previewFile == null) reason = "No artwork file declared or found";
-                else {
-                    File file = new File(item.previewFile);
-                    if (file.getName().toLowerCase(Locale.ROOT).endsWith(".png")) {
-                        if (file.length() <= 64 * 1024 * 1024) image = decodeBoundedPng(Files.readAllBytes(file.toPath()));
-                        if (image == null) reason = "PNG is malformed or exceeds preview limit";
-                    } else {
-                        SffPreview.Result preview = SffPreview.extract(file, item.kind.equals("characters"), item.previewGroup, item.previewImage);
-                        if (!preview.available()) reason = preview.unavailable;
-                        else if (preview.argb != null) image = Bitmap.createBitmap(preview.argb, preview.width, preview.height, Bitmap.Config.ARGB_8888);
-                        else image = decodeBoundedPng(preview.png);
-                        if (reason == null && image == null) reason = "PNG sprite is malformed or exceeds preview limit";
-                    }
-                }
-            } catch (Exception error) { reason = "Could not decode artwork"; }
-            Bitmap result = image;
+            try { rendered = renderArtwork(item, mode); }
+            catch (IOException error) { reason = error.getMessage(); }
+            catch (RuntimeException error) { reason = "Could not decode artwork"; }
+            DisplayPreview result = rendered;
             String message = reason;
             runOnUiThread(() -> {
                 if (isDestroyed() || !key.equals(previewKey)) return;
-                previewBitmap = result; previewReason = message; previewLoading = false;
+                previewBitmap = result == null ? null : result.bitmap;
+                previewSource = result == null ? null : result.source;
+                previewNotice = result == null ? null : result.notice;
+                previewReason = message; previewLoading = false;
                 boolean restoreRosterFocus = rosterButton != null && rosterButton.hasFocus();
                 renderDetail();
                 if (restoreRosterFocus && rosterButton != null) rosterButton.requestFocus();
