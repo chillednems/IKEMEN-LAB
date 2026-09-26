@@ -93,9 +93,9 @@ public final class LibraryCoreTest {
         RosterStore.setEnabled(root, catalog.characters.get(0), false);
         assertTrue(new String(Files.readAllBytes(select.toPath()), StandardCharsets.UTF_8).contains(";KFM/KFM.Def"));
         assertTrue(new String(Files.readAllBytes(select.toPath()), StandardCharsets.UTF_8).contains("opaque=1\r\n"));
-        File[] backups = data.listFiles((dir, name) -> name.startsWith("select.def.backup."));
-        assertNotNull(backups); assertEquals(1, backups.length);
-        assertEquals(initial, new String(Files.readAllBytes(backups[0].toPath()), StandardCharsets.UTF_8));
+        SelectStorage storage = new SelectStorage(root);
+        assertEquals(1, storage.listVersions().size());
+        assertEquals(initial, new String(storage.readVersion(storage.listVersions().get(0).id), StandardCharsets.UTF_8));
     }
 
     @Test public void importLimitsRejectTraversalAndExcessBytes() throws IOException {
@@ -133,9 +133,9 @@ public final class LibraryCoreTest {
         RosterStore.setEnabled(root, item, false);
         byte[] after = Files.readAllBytes(select.toPath());
         assertArrayEquals(original.replace("KFM/KFM.def", ";KFM/KFM.def").getBytes(shiftJis), after);
-        File[] backups = data.listFiles((dir, name) -> name.startsWith("select.def.backup."));
-        assertNotNull(backups); assertEquals(1, backups.length);
-        assertArrayEquals(before, Files.readAllBytes(backups[0].toPath()));
+        SelectStorage storage = new SelectStorage(root);
+        assertEquals(1, storage.listVersions().size());
+        assertArrayEquals(before, storage.readVersion(storage.listVersions().get(0).id));
     }
 
     @Test public void scannerReadsUtf8BomSelect() throws Exception {
