@@ -23,6 +23,7 @@ public final class LibraryScanner {
         public final String author;
         public final String file;
         public final Boolean enabled;
+        public final String warning;
         public final String previewFile;
         public final int previewGroup, previewImage;
         Item(String kind, String reference, String name, String author, String file, Boolean enabled) {
@@ -30,8 +31,13 @@ public final class LibraryScanner {
         }
         Item(String kind, String reference, String name, String author, String file, Boolean enabled,
              String previewFile, int previewGroup, int previewImage) {
+            this(kind, reference, name, author, file, enabled, previewFile, previewGroup, previewImage, null);
+        }
+        Item(String kind, String reference, String name, String author, String file, Boolean enabled,
+             String previewFile, int previewGroup, int previewImage, String warning) {
             this.kind = kind; this.reference = reference; this.name = name; this.author = author; this.file = file; this.enabled = enabled;
             this.previewFile = previewFile; this.previewGroup = previewGroup; this.previewImage = previewImage;
+            this.warning = warning;
         }
     }
 
@@ -146,6 +152,31 @@ public final class LibraryScanner {
                     artwork(root, chosen, sprite), 9000, 1));
         }
         scanStages(root, stages, stages, roster, result.stages, 0);
+        if (selectFile.isFile()) {
+            for (RosterDiagnostics.Entry entry : RosterDiagnostics.entries(root, Files.readAllBytes(selectFile.toPath()))) {
+                List<Item> destination = entry.section.equals("characters") ? result.characters : result.stages;
+                boolean listed = false;
+                for (Item item : destination) if (item.reference.equalsIgnoreCase(entry.rawReference)
+                        || (entry.section.equals("extrastages") && item.reference.equalsIgnoreCase("stages/" + entry.rawReference))) {
+                    listed = true; break;
+                }
+                if (listed) continue;
+                if (entry.warning != null) {
+                    destination.add(new Item(entry.section, entry.rawReference, entry.rawReference, "Unavailable",
+                            null, entry.active, null, 0, 0, entry.warning));
+                } else if (entry.section.equals("characters") && entry.resolvedFile != null
+                        && entry.resolvedFile.isFile() && entry.resolvedFile.getName().toLowerCase(Locale.ROOT).endsWith(".def")) {
+                    File defFile = entry.resolvedFile;
+                    Map<String, Map<String, String>> def = DefParser.parse(readText(defFile));
+                    String name = DefParser.value(def, "info", "displayname",
+                            DefParser.value(def, "info", "name", defFile.getName()));
+                    String sprite = DefParser.value(def, "files", "sprite", DefParser.value(def, "files", "spr", null));
+                    destination.add(new Item("characters", entry.rawReference, name,
+                            DefParser.value(def, "info", "author", "Unknown"), defFile.getAbsolutePath(), entry.active,
+                            artwork(root, defFile, sprite), 9000, 1));
+                }
+            }
+        }
         return result;
     }
 

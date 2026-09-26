@@ -7,10 +7,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.CodingErrorAction;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 
-/** Transactional local roster edits with a copy of the previous file. */
+/** Byte-preserving roster edits committed through the managed version store. */
 public final class RosterStore {
     private RosterStore() {}
 
@@ -25,11 +23,18 @@ public final class RosterStore {
     }
 
     public static synchronized void setEnabled(File root, LibraryScanner.Item item, boolean enabled) throws IOException {
+        setEnabled(root, item, enabled, null);
+    }
+
+    public static synchronized void setEnabled(File root, LibraryScanner.Item item, boolean enabled,
+                                               Integer retainedVersions) throws IOException {
+        if (enabled && item.warning != null) throw new IOException("Referenced content is missing: " + item.reference);
+        SelectStorage storage = new SelectStorage(root);
         File select = selectFile(root);
         File data = select.getParentFile();
         if (!data.isDirectory() && !data.mkdirs()) throw new IOException("Could not create data directory");
         if (select.isFile() && select.length() > 2 * 1024 * 1024) throw new IOException("select.def exceeds 2 MB editing limit");
-        byte[] previous = select.isFile() ? Files.readAllBytes(select.toPath()) : new byte[0];
+        byte[] previous = storage.readWorking().bytes;
         boolean bom = previous.length >= 3 && (previous[0] & 255) == 239 && (previous[1] & 255) == 187 && (previous[2] & 255) == 191;
         int offset = bom ? 3 : 0;
         Charset encoding = StandardCharsets.UTF_8;
@@ -48,22 +53,15 @@ public final class RosterStore {
             content = new String(previous, encoding);
         }
         SelectDefEditor editor = new SelectDefEditor(content);
-        editor.setEnabled(item.kind, item.reference, enabled);
-        if (select.isFile()) {
-            File backup = Files.createTempFile(data.toPath(), "select.def.backup.", ".bak").toFile();
-            Files.copy(select.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        if (item.warning != null) editor.setEnabledExact(item.kind, item.reference, enabled);
+        else editor.setEnabled(item.kind, item.reference, enabled);
+        byte[] changed = editor.content().getBytes(encoding);
+        if (bom) {
+            byte[] withBom = new byte[changed.length + 3];
+            withBom[0] = (byte) 239; withBom[1] = (byte) 187; withBom[2] = (byte) 191;
+            System.arraycopy(changed, 0, withBom, 3, changed.length);
+            changed = withBom;
         }
-        File temp = File.createTempFile("select-", ".tmp", data);
-        try {
-            byte[] changed = editor.content().getBytes(encoding);
-            if (bom) {
-                byte[] withBom = new byte[changed.length + 3];
-                withBom[0] = (byte) 239; withBom[1] = (byte) 187; withBom[2] = (byte) 191;
-                System.arraycopy(changed, 0, withBom, 3, changed.length);
-                changed = withBom;
-            }
-            Files.write(temp.toPath(), changed);
-            Files.move(temp.toPath(), select.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } finally { Files.deleteIfExists(temp.toPath()); }
+        storage.commitWorking(SelectStorage.hash(previous), changed, "toggle:" + item.reference, retainedVersions);
     }
 }

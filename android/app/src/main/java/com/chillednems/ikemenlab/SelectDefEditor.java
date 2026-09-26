@@ -82,6 +82,15 @@ public final class SelectDefEditor {
 
     /** Enables an unlisted item by adding a relative reference within the requested section. */
     public void setEnabled(String section, String relativeRef, boolean enabled) {
+        setEnabled(section, relativeRef, enabled, false);
+    }
+
+    /** Exact mode is for a missing reference: do not alter another DEF in the same character folder. */
+    public void setEnabledExact(String section, String relativeRef, boolean enabled) {
+        setEnabled(section, relativeRef, enabled, true);
+    }
+
+    private void setEnabled(String section, String relativeRef, boolean enabled, boolean exact) {
         String wanted = section.toLowerCase(Locale.ROOT);
         if (!wanted.equals("characters") && !wanted.equals("extrastages")) throw new IllegalArgumentException("Invalid roster section");
         if (relativeRef.trim().isEmpty() || relativeRef.startsWith("/") || relativeRef.contains("..") || relativeRef.contains("\\"))
@@ -96,7 +105,9 @@ public final class SelectDefEditor {
                 if (current.equals(wanted) && insert < 0) insert = i;
                 current = next;
             } else if (current.equals(wanted)) {
-                if (matches(current, candidate(line.text), relativeRef)) {
+                String actual = candidate(line.text);
+                if (exact ? actual != null && actual.equals(relativeRef.replace('\\', '/').toLowerCase(Locale.ROOT))
+                        : matches(current, actual, relativeRef)) {
                     found = true;
                     if (enabled && line.text.trim().startsWith(";")) {
                         int semi = line.text.indexOf(';');
