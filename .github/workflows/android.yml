@@ -26,10 +26,26 @@ jobs:
           packages: platform-tools
       - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
+      - name: APK privacy scanner tests
+        run: python3 -m unittest discover -s android/scripts/tests -p 'test_*.py' -v
       - name: Unit tests, lint, and debug APK
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: APK privacy gate
+        working-directory: android
+        run: |
+          python3 scripts/apk_privacy_scan.py app/build/outputs/apk/debug/app-debug.apk \
+            --source-sha "$(git rev-parse HEAD)" \
+            --report app/build/reports/apk-privacy-debug.json
+      - name: Upload APK privacy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ikemen-lab-android-apk-privacy
+          path: android/app/build/reports/apk-privacy-debug.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: ikemen-lab-android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk

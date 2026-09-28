@@ -53,3 +53,5 @@ The package ID is `com.chillednems.ikemenlab`; this branch is version 0.6.0 (ver
 ```
 
 The debug APK uses a debug certificate and cannot update a release-signed install. A release build requires the existing key through `IKEMEN_RELEASE_STORE_FILE` (absolute path), `IKEMEN_RELEASE_KEY_ALIAS`, `IKEMEN_RELEASE_STORE_PASSWORD`, and `IKEMEN_RELEASE_KEY_PASSWORD` in the build environment. With those set, run `./gradlew :app:assembleRelease`. Preserve that key for updates and keep it and its passwords outside Git.
+
+Before sharing an APK, run the [APK privacy gate](APK-PRIVACY.md). CI checks its debug APK; a signed release needs a fresh scan of the exact signed file and the recorded signer/package/version checks before upload.

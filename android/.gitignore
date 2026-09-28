@@ -3,3 +3,6 @@ build/
 app/build/
 local.properties
 *.apk
+__pycache__/
+*.pyc
+.apk-privacy-denylist*
