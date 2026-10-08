@@ -69,3 +69,9 @@ The grid displays visible character thumbnails from a self-created demonstration
 ![Bounded DEF facts for a synthetic character](android-metadata-facts-synthetic.png)
 
 The facts view reads declared character metadata from a self-created DEF file. The [input definitions](android-metadata-cmd-synthetic.png) view lists static CMD labels and inputs without claiming verified playable moves. Both captures use the independently tested `a1cc773` debug APK; the later `Filter` toolbar wording change does not affect these views.
+
+## Source-specific collections (feature branch)
+
+![Synthetic snapshot and smart collections for one linked source](android-collections-list-synthetic.png)
+
+The private collection list shows a named snapshot and a dynamic smart collection for self-created demonstration content. The [activation review](android-collections-review-synthetic.png) shows the ordered character and stage counts and makes clear that activation changes the private working roster; the linked source requires a separate Export review. Both captures use the independently tested integrated `e80fbac` debug APK.
