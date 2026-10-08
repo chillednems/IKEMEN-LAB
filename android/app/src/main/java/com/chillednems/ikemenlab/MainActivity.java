@@ -1010,6 +1010,7 @@ public final class MainActivity extends Activity {
                 if (!plan.workingSha.equals(refreshed.workingSha) || !refreshed.missing.isEmpty()
                         || !java.util.Arrays.equals(plan.replacement, refreshed.replacement))
                     throw new IOException("Collection, source, or working roster changed; review activation again");
+                CollectionPlan.requireActiveWorkingRoster(openSource(expected));
                 storage.commitWorking(plan.workingSha, plan.replacement,
                         "collection:activate:" + id, retention());
             } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {

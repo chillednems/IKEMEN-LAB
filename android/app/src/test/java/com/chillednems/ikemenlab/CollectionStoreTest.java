@@ -138,5 +138,11 @@ public final class CollectionStoreTest {
         Files.write(config.toPath(), "[Config]\nMotif = data/pack/system.def\n".getBytes(StandardCharsets.UTF_8));
         try { CollectionPlan.requireActiveWorkingRoster(LibraryFiles.local(source)); fail("Alternate roster allowed"); }
         catch (IOException expected) { assertTrue(expected.getMessage().contains("Active screenpack")); }
+        Files.write(config.toPath(), "[Config]\nMotif = ../../outside/system.def\n".getBytes(StandardCharsets.UTF_8));
+        try { CollectionPlan.requireActiveWorkingRoster(LibraryFiles.local(source)); fail("Unsafe motif allowed"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("unverified")); }
+        Files.write(config.toPath(), "[Config]\nMotif = data/missing/system.def\n".getBytes(StandardCharsets.UTF_8));
+        try { CollectionPlan.requireActiveWorkingRoster(LibraryFiles.local(source)); fail("Missing motif allowed"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("unverified")); }
     }
 }

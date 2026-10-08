@@ -21,9 +21,11 @@ final class CollectionPlan {
 
     static void requireActiveWorkingRoster(LibraryFiles.Node source) throws IOException {
         ScreenpackStatus active = ScreenpackStatus.inspect(source);
-        if (active.knownAlternate)
-            throw new IOException("Active screenpack uses " + active.select
-                    + "; this collection would change a roster the game does not use");
+        if (!active.globalRoster)
+            throw new IOException(active.knownAlternate
+                    ? "Active screenpack uses " + active.select
+                    + "; this collection would change a roster the game does not use"
+                    : "Active screenpack roster is unverified; " + active.warning);
     }
 
     static CollectionPlan prepare(byte[] working, CollectionStore.Record collection,
