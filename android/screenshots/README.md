@@ -63,3 +63,9 @@ The static preview reads the active motif's select-screen capacity and shows the
 ![Synthetic character thumbnails in the Android library grid](android-browser-grid-synthetic.png)
 
 The grid displays visible character thumbnails from a self-created demonstration library and a selected item's details. The list/grid control preserves controller selection while switching views. Captured from the independently tested `b251c11` debug APK.
+
+## Source facts and static input definitions (feature branch)
+
+![Bounded DEF facts for a synthetic character](android-metadata-facts-synthetic.png)
+
+The facts view reads declared character metadata from a self-created DEF file. The [input definitions](android-metadata-cmd-synthetic.png) view lists static CMD labels and inputs without claiming verified playable moves. Both captures use the independently tested `a1cc773` debug APK; the later `Filter` toolbar wording change does not affect these views.
