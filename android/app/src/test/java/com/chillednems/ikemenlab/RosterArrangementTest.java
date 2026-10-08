@@ -37,4 +37,13 @@ public final class RosterArrangementTest {
             assertTrue(expected.getMessage().contains("30,000"));
         }
     }
+
+    @Test public void ignoresNonSlotNotesAndUnsupportedRandomTokens() throws Exception {
+        String original = "[Characters]\nA\n# note\n---\nrandom\nrandomselect/extra\nB\nrandomselect\nempty\n";
+        RosterArrangement arrangement = new RosterArrangement(original.getBytes(StandardCharsets.UTF_8));
+        assertEquals(4, arrangement.slots().size());
+        assertEquals("B", arrangement.slots().get(1).title);
+        String moved = new String(arrangement.moved(0, 1), StandardCharsets.UTF_8);
+        assertEquals("[Characters]\nB\n# note\n---\nrandom\nrandomselect/extra\nA\nrandomselect\nempty\n", moved);
+    }
 }

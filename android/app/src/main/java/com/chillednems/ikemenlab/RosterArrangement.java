@@ -43,7 +43,7 @@ final class RosterArrangement {
             content = new String(bytes, offset, bytes.length - offset, charset);
         }
         encoding = charset;
-        String section = "";
+        RosterLineClassifier classifier = new RosterLineClassifier();
         int start = 0;
         for (int i = 0; i <= content.length(); i++) {
             if (i < content.length() && content.charAt(i) != '\n' && content.charAt(i) != '\r') continue;
@@ -55,17 +55,16 @@ final class RosterArrangement {
             String value = content.substring(start, i);
             if (lines.size() >= MAX_LINES) throw new IOException("Roster arrangement exceeds 30,000 line preview limit");
             lines.add(new Line(value, content.substring(i, end)));
-            String next = RosterLineClassifier.sectionOf(value);
-            if (next != null) section = next;
-            else if (section.equals("characters")) {
+            RosterLineClassifier.Candidate candidate = classifier.accept(value);
+            if (candidate != null && candidate.active && candidate.section.equals("characters"))
+                slots.add(new Slot(lines.size() - 1, candidate.reference));
+            else if (classifier.section().equals("characters") && candidate == null) {
                 String trimmed = value.trim();
                 if (!trimmed.startsWith(";") && !trimmed.isEmpty()) {
                     String token = trimmed.split("[,;]", 2)[0].trim();
                     String lower = token.toLowerCase(Locale.ROOT);
                     if (lower.equals("empty")) slots.add(new Slot(lines.size() - 1, "Empty slot"));
                     else if (lower.equals("randomselect")) slots.add(new Slot(lines.size() - 1, "Random select"));
-                    else if (!token.contains("=") && !RosterLineClassifier.isUnsafe(token.replace('\\', '/')))
-                        slots.add(new Slot(lines.size() - 1, token));
                 }
             }
             i = end - 1;
