@@ -30,6 +30,9 @@ import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.util.LruCache;
+import android.widget.BaseAdapter;
+import android.widget.GridView;
 
 import java.io.File;
 import java.io.IOException;
@@ -44,6 +47,11 @@ import java.util.Locale;
 import java.util.Date;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.HashSet;
+import java.util.Set;
 
 /** Landscape-friendly touch and hardware-controller library browser. */
 public final class MainActivity extends Activity {
@@ -53,19 +61,30 @@ public final class MainActivity extends Activity {
     private static final int PICK_BACKUP_TREE = 103;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final ExecutorService PREVIEW = Executors.newSingleThreadExecutor();
+    private static final ThreadPoolExecutor THUMBNAILS = new ThreadPoolExecutor(2, 2, 0L,
+            TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(48));
     private static final String PREFS = "library";
     private static final String KEY_PATH = "active_path";
     private static final String KEY_ORIENTATION = "orientation";
     private static final String KEY_RETENTION = "backup_retention";
     private static final String KEY_PREVIEW_MODE = "character_preview_mode";
+    private static final String KEY_BROWSER_GRID = "browser_grid";
     private static final String KEY_NO_CHANGE_WARNING = "warn_unchanged_export";
     private LinearLayout root;
     private FrameLayout screenFrame;
     private LinearLayout activeSheet;
     private View sheetPreviousFocus;
-    private LinearLayout list;
+    private GridView list;
+    private BrowserAdapter browserAdapter;
+    private final LruCache<String, Bitmap> thumbnailCache = new LruCache<String, Bitmap>(16 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
+    };
+    private final LruCache<String, Boolean> thumbnailUnavailable = new LruCache<>(256);
+    private final Set<String> thumbnailsLoading = new HashSet<>();
+    private boolean thumbnailRetryScheduled;
     private LinearLayout detail;
     private Button rosterButton;
+    private Button browserViewButton;
     private Button exportButton;
     private TextView exportHint;
     private TextView status;
@@ -190,6 +209,7 @@ public final class MainActivity extends Activity {
     private void buildScreen() {
         activeSheet = null;
         sheetPreviousFocus = null;
+        browserViewButton = null;
         boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
         compactLayout = landscape && (forceCompactLayout || getResources().getConfiguration().screenHeightDp < 320);
         root = column();
@@ -249,6 +269,9 @@ public final class MainActivity extends Activity {
             exportButton = button("Export", this::reviewSourceExport);
             actions.addView(exportButton, new LinearLayout.LayoutParams(0, dp(58), 1));
             actions.addView(button("Roster actions", this::showRosterActions), new LinearLayout.LayoutParams(0, dp(58), 1));
+            browserViewButton = button(browserGrid() ? "View: Grid" : "View: List", this::toggleBrowserView);
+            actions.addView(browserViewButton,
+                    new LinearLayout.LayoutParams(0, dp(58), .75f));
             actions.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(0, dp(58), 1));
             exportHint = label("", 13, false);
             root.addView(exportHint);
@@ -267,19 +290,29 @@ public final class MainActivity extends Activity {
         LinearLayout panels = new LinearLayout(this);
         panels.setOrientation(landscape ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         root.addView(panels, new LinearLayout.LayoutParams(-1, 0, 1));
-        list = column();
+        list = new GridView(this);
+        list.setClipToPadding(false);
+        list.setPadding(dp(2), dp(2), dp(8), dp(2));
+        list.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        GradientDrawable browserSelector = new GradientDrawable();
+        browserSelector.setColor(Color.TRANSPARENT);
+        browserSelector.setCornerRadius(dp(9));
+        browserSelector.setStroke(dp(3), 0xffffc857);
+        list.setSelector(browserSelector);
+        list.setDrawSelectorOnTop(true);
+        browserAdapter = new BrowserAdapter();
+        list.setAdapter(browserAdapter);
+        list.setOnItemClickListener((parent, view, position, id) -> activateBrowserItem(position));
+        configureBrowserLayout();
         detail = column();
-        ScrollView listScroll = new ScrollView(this);
         ScrollView detailScroll = new ScrollView(this);
-        listScroll.setFillViewport(true);
         detailScroll.setFillViewport(true);
-        listScroll.addView(list);
         detailScroll.addView(detail);
         if (landscape) {
-            panels.addView(listScroll, new LinearLayout.LayoutParams(0, -1, 1.15f));
+            panels.addView(list, new LinearLayout.LayoutParams(0, -1, 1.15f));
             panels.addView(detailScroll, new LinearLayout.LayoutParams(0, -1, 1));
         } else {
-            panels.addView(listScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+            panels.addView(list, new LinearLayout.LayoutParams(-1, 0, 1));
             panels.addView(detailScroll, new LinearLayout.LayoutParams(-1, 0, 1));
         }
         renderList();
@@ -290,6 +323,33 @@ public final class MainActivity extends Activity {
         String choice = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_ORIENTATION, "landscape");
         setRequestedOrientation("portrait".equals(choice)
                 ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+    }
+
+    private boolean browserGrid() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_BROWSER_GRID, false);
+    }
+
+    private void toggleBrowserView() {
+        if (busy) return;
+        boolean grid = !browserGrid();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_BROWSER_GRID, grid).apply();
+        if (browserViewButton != null) browserViewButton.setText(grid ? "View: Grid" : "View: List");
+        int first = list == null ? 0 : list.getFirstVisiblePosition();
+        int focused = list == null ? -1 : list.getSelectedItemPosition();
+        configureBrowserLayout();
+        if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
+        if (list != null) list.setSelection(focused >= 0 ? focused : Math.max(0, first));
+        showStatus(grid ? "Grid browser selected." : "List browser selected.");
+    }
+
+    private void configureBrowserLayout() {
+        if (list == null) return;
+        int columns = !browserGrid() || browserAdapter != null && browserAdapter.isMessage() ? 1
+                : getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 3 : 2;
+        list.setNumColumns(columns);
+        list.setHorizontalSpacing(dp(4));
+        list.setVerticalSpacing(dp(4));
+        list.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
     }
 
     private void showSettings() {
@@ -960,6 +1020,9 @@ public final class MainActivity extends Activity {
         menu.getMenu().add("Roster actions").setOnMenuItemClickListener(item -> {
             anchor.post(this::showRosterActions); return true;
         });
+        menu.getMenu().add(browserGrid() ? "Switch to list" : "Switch to grid").setOnMenuItemClickListener(item -> {
+            anchor.post(this::toggleBrowserView); return true;
+        });
         menu.show();
     }
 
@@ -1471,47 +1534,168 @@ public final class MainActivity extends Activity {
     }
 
     private void renderList() {
-        if (list == null) return;
-        list.removeAllViews();
-        if (catalog == null) { list.addView(label(library == null
-                ? "Select a source folder to browse your library."
-                : "Source unavailable. Reconnect the selected folder or refresh the library.", 17, false)); renderDetail(); return; }
+        if (browserAdapter == null) return;
+        if (catalog == null) {
+            browserAdapter.replace(new ArrayList<>(), library == null
+                    ? "Select a source folder to browse your library."
+                    : "Source unavailable. Reconnect the selected folder or refresh the library.");
+            renderDetail(); return;
+        }
         String query = searchText.trim().toLowerCase(Locale.ROOT);
         List<LibraryScanner.Item> items = new ArrayList<>();
-        items.addAll(catalog.characters);
-        items.addAll(catalog.stages);
-        int shown = 0;
-        for (LibraryScanner.Item item : items) {
-            if (!query.isEmpty() && !(item.name + " " + item.author + " " + item.reference).toLowerCase(Locale.ROOT).contains(query)) continue;
-            String state = item.enabled == null ? "Unlisted" : item.enabled ? "Enabled" : "Disabled";
-            TextView row = label((item.kind.equals("characters") ? "Character" : "Stage") + " · " + item.name + " · " + state
-                    + (item.warning == null ? "" : " · MISSING: " + item.warning), 16, false);
-            if (item.warning != null) row.setTextColor(0xffff6b6b);
-            row.setMinHeight(dp(52));
-            row.setFocusable(true);
-            row.setClickable(true);
-            row.setTag(selectionKey(item));
-            row.setOnClickListener(v -> {
-                RowActivation.Action action = RowActivation.decide(
-                        selected == null ? null : selectionKey(selected), selectionKey(item), busy);
-                if (action == RowActivation.Action.IGNORE) return;
-                if (action == RowActivation.Action.TOGGLE) {
-                    toggleSelected(item.enabled == null || !item.enabled);
-                    return;
-                }
-                selected = item;
-                renderList();
-                View replacement = list.findViewWithTag(selectionKey(item));
-                if (replacement != null) replacement.requestFocus();
-            });
-            focusStyle(row, selected != null && selected.reference.equals(item.reference) && selected.kind.equals(item.kind));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-            params.setMargins(dp(2), dp(2), dp(8), dp(2));
-            list.addView(row, params);
-            shown++;
-        }
-        if (shown == 0) list.addView(label("No matching content.", 16, false));
+        for (LibraryScanner.Item item : catalog.characters)
+            if (query.isEmpty() || (item.name + " " + item.author + " " + item.reference).toLowerCase(Locale.ROOT).contains(query)) items.add(item);
+        for (LibraryScanner.Item item : catalog.stages)
+            if (query.isEmpty() || (item.name + " " + item.author + " " + item.reference).toLowerCase(Locale.ROOT).contains(query)) items.add(item);
+        browserAdapter.replace(items, items.isEmpty() ? "No matching content." : null);
         renderDetail();
+    }
+
+    private final class BrowserAdapter extends BaseAdapter {
+        private final List<LibraryScanner.Item> items = new ArrayList<>();
+        private String message;
+
+        boolean isMessage() { return message != null; }
+
+        int positionOf(String key) {
+            for (int i = 0; i < items.size(); i++) if (selectionKey(items.get(i)).equals(key)) return i;
+            return -1;
+        }
+
+        void replace(List<LibraryScanner.Item> next, String emptyMessage) {
+            items.clear(); items.addAll(next);
+            message = emptyMessage;
+            configureBrowserLayout();
+            notifyDataSetChanged();
+        }
+
+        @Override public int getCount() { return isMessage() ? 1 : items.size(); }
+        @Override public Object getItem(int position) { return isMessage() ? message : items.get(position); }
+        @Override public long getItemId(int position) {
+            if (isMessage()) return Long.MIN_VALUE;
+            String key = selectionKey(items.get(position));
+            long hash = 0xcbf29ce484222325L;
+            for (int i = 0; i < key.length(); i++) hash = (hash ^ key.charAt(i)) * 0x100000001b3L;
+            return hash;
+        }
+        @Override public boolean hasStableIds() { return true; }
+        @Override public int getViewTypeCount() { return 3; }
+        @Override public int getItemViewType(int position) { return isMessage() ? 2 : browserGrid() ? 1 : 0; }
+
+        @Override public View getView(int position, View reusable, ViewGroup parent) {
+            if (isMessage()) {
+                TextView text = reusable instanceof TextView ? (TextView) reusable : label("", 16, false);
+                text.setText(message);
+                text.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(90)));
+                return text;
+            }
+            boolean grid = browserGrid();
+            BrowserCard card = reusable instanceof BrowserCard && ((BrowserCard) reusable).grid == grid
+                    ? (BrowserCard) reusable : new BrowserCard(grid);
+            LibraryScanner.Item item = items.get(position);
+            String key = selectionKey(item);
+            String state = item.enabled == null ? "Unlisted" : item.enabled ? "Enabled" : "Disabled";
+            card.title.setText(item.name + "\n" + (item.kind.equals("characters") ? "Character" : "Stage")
+                    + " · " + state + (item.warning == null ? "" : " · MISSING"));
+            card.title.setTextColor(item.warning == null ? Color.WHITE : 0xffff6b6b);
+            card.setTag(key);
+            card.setContentDescription(item.name + ", " + state
+                    + (item.warning == null ? "" : ", missing reference"));
+            focusStyle(card, selected != null && key.equals(selectionKey(selected)));
+            String thumbnailKey = thumbnailKey(item);
+            card.boundThumbnailKey = thumbnailKey;
+            Bitmap cached = thumbnailCache.get(thumbnailKey);
+            card.thumbnail.setImageBitmap(cached);
+            card.thumbnail.setContentDescription(cached == null ? "Artwork unavailable or loading" : item.name + " thumbnail");
+            if (cached == null && item.warning == null && item.defNode != null
+                    && thumbnailUnavailable.get(thumbnailKey) == null) loadThumbnail(item, thumbnailKey);
+            return card;
+        }
+    }
+
+    private final class BrowserCard extends LinearLayout {
+        final boolean grid;
+        final ImageView thumbnail;
+        final TextView title;
+        String boundThumbnailKey;
+        BrowserCard(boolean grid) {
+            super(MainActivity.this);
+            this.grid = grid;
+            setOrientation(grid ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+            setGravity(android.view.Gravity.CENTER_VERTICAL);
+            setPadding(dp(5), dp(5), dp(5), dp(5));
+            setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(grid ? 148 : 78)));
+            thumbnail = new ImageView(MainActivity.this);
+            thumbnail.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            thumbnail.setBackgroundColor(0xff172530);
+            addView(thumbnail, new LinearLayout.LayoutParams(dp(grid ? 92 : 66), dp(grid ? 88 : 66)));
+            title = label("", grid ? 13 : 16, false);
+            title.setMaxLines(grid ? 2 : 3);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            addView(title, grid ? new LinearLayout.LayoutParams(-1, 0, 1)
+                    : new LinearLayout.LayoutParams(0, -2, 1));
+        }
+    }
+
+    private void activateBrowserItem(int position) {
+        if (browserAdapter == null || browserAdapter.isMessage() || position < 0 || position >= browserAdapter.items.size()) return;
+        LibraryScanner.Item item = browserAdapter.items.get(position);
+        String key = selectionKey(item);
+        RowActivation.Action action = RowActivation.decide(selected == null ? null : selectionKey(selected), key, busy);
+        if (action == RowActivation.Action.IGNORE) return;
+        if (action == RowActivation.Action.TOGGLE) { toggleSelected(item.enabled == null || !item.enabled); return; }
+        selected = item;
+        browserAdapter.notifyDataSetChanged();
+        renderDetail();
+        list.setSelection(position);
+    }
+
+    private String thumbnailKey(LibraryScanner.Item item) {
+        return (library == null ? "" : library.getAbsolutePath()) + "|" + catalogEpoch + "|"
+                + selectionKey(item) + "|" + (item.kind.equals("characters") ? "portrait" : "stage");
+    }
+
+    private void loadThumbnail(LibraryScanner.Item item, String key) {
+        if (!thumbnailsLoading.add(key)) return;
+        try {
+            THUMBNAILS.execute(() -> {
+                Bitmap bitmap = null;
+                try {
+                    PreviewFrame frame = item.kind.equals("characters")
+                            ? CharacterPreview.render(item.defNode, CharacterPreview.Mode.PORTRAIT, 96, 96)
+                            : StagePreview.render(item.defNode, 96, 96);
+                    bitmap = Bitmap.createBitmap(frame.argb, frame.width, frame.height, Bitmap.Config.ARGB_8888);
+                } catch (IOException | RuntimeException ignored) { }
+                Bitmap result = bitmap;
+                runOnUiThread(() -> {
+                    thumbnailsLoading.remove(key);
+                    if (isDestroyed()) return;
+                    if (result == null) thumbnailUnavailable.put(key, true);
+                    else thumbnailCache.put(key, result);
+                    if (list == null) return;
+                    for (int i = 0; i < list.getChildCount(); i++) {
+                        View child = list.getChildAt(i);
+                        if (!(child instanceof BrowserCard)) continue;
+                        BrowserCard visible = (BrowserCard) child;
+                        if (!key.equals(visible.boundThumbnailKey)) continue;
+                        visible.thumbnail.setImageBitmap(result);
+                        visible.thumbnail.setContentDescription(result == null ? "Artwork unavailable" : item.name + " thumbnail");
+                    }
+                });
+            });
+        } catch (java.util.concurrent.RejectedExecutionException full) {
+            thumbnailsLoading.remove(key);
+            scheduleThumbnailRetry();
+        }
+    }
+
+    private void scheduleThumbnailRetry() {
+        if (thumbnailRetryScheduled || list == null) return;
+        thumbnailRetryScheduled = true;
+        list.postDelayed(() -> {
+            thumbnailRetryScheduled = false;
+            if (!isDestroyed() && browserAdapter != null) browserAdapter.notifyDataSetChanged();
+        }, 350);
     }
 
     private void renderDetail() {
@@ -1679,8 +1863,8 @@ public final class MainActivity extends Activity {
                     busy = false;
                     renderList();
                     if (selected != null) {
-                        View row = list.findViewWithTag(selectionKey(selected));
-                        if (row != null) row.requestFocus();
+                        int position = browserAdapter.positionOf(selectionKey(selected));
+                        if (position >= 0) { list.setSelection(position); list.requestFocus(); }
                     }
                     showStatus("Working roster updated. Review Export to apply it to the linked folder.");
                 });
@@ -1712,7 +1896,11 @@ public final class MainActivity extends Activity {
         if (event.getAction() == KeyEvent.ACTION_DOWN && (event.getSource() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD) {
             if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A) {
                 View focused = getCurrentFocus();
-                if (focused != null) focused.performClick();
+                if (focused == list && list != null) {
+                    int position = list.getSelectedItemPosition();
+                    if (position < 0) position = list.getFirstVisiblePosition();
+                    activateBrowserItem(position);
+                } else if (focused != null) focused.performClick();
                 return true;
             }
             if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B) { handleBack(); return true; }
@@ -1739,6 +1927,24 @@ public final class MainActivity extends Activity {
                 int direction = ControllerPolicy.stickDirection(x, y);
                 if (direction != 0) {
                     View focused = getCurrentFocus();
+                    if (focused == list && browserAdapter != null && !browserAdapter.isMessage()) {
+                        int position = Math.max(0, list.getSelectedItemPosition());
+                        int columns = browserGrid()
+                                ? (getResources().getConfiguration().orientation
+                                == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 3 : 2) : 1;
+                        int nextPosition = switch (direction) {
+                            case ControllerPolicy.UP -> position - columns;
+                            case ControllerPolicy.DOWN -> position + columns;
+                            case ControllerPolicy.LEFT -> position % columns == 0 ? -1 : position - 1;
+                            case ControllerPolicy.RIGHT -> position % columns == columns - 1 ? -1 : position + 1;
+                            default -> -1;
+                        };
+                        if (nextPosition >= 0 && nextPosition < browserAdapter.getCount()) {
+                            list.setSelection(nextPosition);
+                            lastStickMove = now;
+                            return true;
+                        }
+                    }
                     View origin = focused == null ? root : focused;
                     View next = switch (direction) {
                         case ControllerPolicy.LEFT -> origin.focusSearch(View.FOCUS_LEFT);
