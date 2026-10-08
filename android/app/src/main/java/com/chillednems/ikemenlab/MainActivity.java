@@ -321,7 +321,7 @@ public final class MainActivity extends Activity {
             browserViewButton = button(browserGrid() ? "View: Grid" : "View: List", this::toggleBrowserView);
             actions.addView(browserViewButton,
                     new LinearLayout.LayoutParams(0, dp(58), .75f));
-            actions.addView(button("Filters", this::showFilters), new LinearLayout.LayoutParams(0, dp(58), .7f));
+            actions.addView(button("Filter", this::showFilters), new LinearLayout.LayoutParams(0, dp(58), .7f));
             actions.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(0, dp(58), 1));
             exportHint = label("", 13, false);
             root.addView(exportHint);
