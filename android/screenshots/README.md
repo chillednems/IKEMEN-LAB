@@ -57,3 +57,9 @@ The preview setting marks **Neutral over portrait** as the current choice with a
 ![Approximate select screen and roster arrangement with a synthetic 1-by-3 screenpack](android-screenpack-roster-portrait.png)
 
 The static preview reads the active motif's select-screen capacity and shows the five occupied roster slots, including random and empty slots, with two beyond capacity. This is an approximate slot-order view; in-game placement may differ. The capture uses a self-created demonstration library and the tested `600f115` debug APK.
+
+## Recycled Android browser (feature branch)
+
+![Synthetic character thumbnails in the Android library grid](android-browser-grid-synthetic.png)
+
+The grid displays visible character thumbnails from a self-created demonstration library and a selected item's details. The list/grid control preserves controller selection while switching views. Captured from the independently tested `b251c11` debug APK.
