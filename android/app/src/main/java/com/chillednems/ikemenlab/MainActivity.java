@@ -60,6 +60,8 @@ public final class MainActivity extends Activity {
     private static final int EXPORT_SELECT = 101;
     private static final int RECONNECT_TREE = 102;
     private static final int PICK_BACKUP_TREE = 103;
+    private static final int PICK_ADDON_ZIP = 104;
+    private static final int PICK_ADDON_FOLDER = 105;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final ExecutorService PREVIEW = Executors.newSingleThreadExecutor();
     private static final ExecutorService DETAILS = Executors.newSingleThreadExecutor();
@@ -111,6 +113,9 @@ public final class MainActivity extends Activity {
     private boolean inferredTagFilter;
     private TagStore tagStore;
     private String tagSource;
+    private String importKind;
+    private File importLibrary;
+    private LibraryBinding importBinding;
     private boolean busy;
     private long lastStickMove;
     private volatile String previewKey;
@@ -142,6 +147,12 @@ public final class MainActivity extends Activity {
             reconnectLibrary = managedLibrary(state.getString("reconnect"));
             backupPickerLibrary = managedLibrary(state.getString("backupPicker"));
             backupPickerRecovery = state.getBoolean("backupPickerRecovery", false);
+            importKind = state.getString("importKind");
+            importLibrary = managedLibrary(state.getString("importLibrary"));
+            if (importLibrary != null) {
+                try { importBinding = LibraryBinding.load(this, importLibrary); }
+                catch (IOException ignored) { importLibrary = null; importKind = null; }
+            }
             String requiredTree = state.getString("backupPickerRequiredTree");
             backupPickerRequiredTree = requiredTree == null ? null : Uri.parse(requiredTree);
             if (backupPickerLibrary != null) {
@@ -176,6 +187,8 @@ public final class MainActivity extends Activity {
         if (backupPickerLibrary != null) state.putString("backupPicker", backupPickerLibrary.getAbsolutePath());
         state.putBoolean("backupPickerRecovery", backupPickerRecovery);
         if (backupPickerRequiredTree != null) state.putString("backupPickerRequiredTree", backupPickerRequiredTree.toString());
+        state.putString("importKind", importKind);
+        if (importLibrary != null) state.putString("importLibrary", importLibrary.getAbsolutePath());
         super.onSaveInstanceState(state);
     }
 
@@ -629,10 +642,231 @@ public final class MainActivity extends Activity {
 
     private void showRosterActions() {
         if (busy) return;
-        showActionSheet("Roster actions", new String[]{"Arrange roster · select screen", "Collections · working roster", "Refresh library", "Review export to linked source", "Backups and restore",
+        showActionSheet("Roster actions", new String[]{"Arrange roster · select screen", "Collections · working roster", "Import one add-on · add only", "Library health · selected item", "Refresh library", "Review export to linked source", "Backups and restore",
                         "Save a copy elsewhere", "Recovery"},
-                new Runnable[]{() -> showArrangement(0), this::showCollections, this::refreshCatalog, this::reviewSourceExport, this::showBackups,
+                new Runnable[]{() -> showArrangement(0), this::showCollections, this::showImportActions, this::showLibraryHealth, this::refreshCatalog, this::reviewSourceExport, this::showBackups,
                         this::pickExport, this::showRecovery});
+    }
+
+    private File importRoot() { return new File(getFilesDir(), "addon-imports"); }
+
+    private List<File> pendingImports() {
+        List<File> pending = new ArrayList<>();
+        File[] stages = importRoot().listFiles();
+        if (stages != null) for (File stage : stages)
+            if (stage.isDirectory() && new File(stage, "install.properties").isFile()) pending.add(stage);
+        return pending;
+    }
+
+    private void discardUnreviewedImports() {
+        File[] stages = importRoot().listFiles();
+        if (stages != null) for (File stage : stages)
+            if (stage.isDirectory() && !new File(stage, "install.properties").exists()) AddonPackage.erase(stage);
+    }
+
+    private void showImportActions() {
+        if (busy || library == null || binding == null || binding.sourceTree == null) {
+            showStatus("Reconnect the linked source before importing an add-on."); return;
+        }
+        List<File> pending = pendingImports();
+        if (!pending.isEmpty()) {
+            List<String> labels = new ArrayList<>();
+            List<Runnable> actions = new ArrayList<>();
+            for (File stage : pending) {
+                String description;
+                try { description = AddonInstallTransaction.pendingDescription(stage); }
+                catch (IOException error) { description = "Damaged import journal"; }
+                labels.add("Recover · " + description);
+                actions.add(() -> recoverImport(stage));
+            }
+            showActionSheet("Resolve incomplete import before another add-on", labels.toArray(new String[0]),
+                    actions.toArray(new Runnable[0]));
+            return;
+        }
+        discardUnreviewedImports();
+        showActionSheet("Import exactly one add-on · source folder only", new String[]{
+                "Character ZIP", "Character folder", "Stage ZIP", "Stage folder"},
+                new Runnable[]{() -> pickAddon("chars", true), () -> pickAddon("chars", false),
+                        () -> pickAddon("stages", true), () -> pickAddon("stages", false)});
+    }
+
+    private void pickAddon(String kind, boolean zip) {
+        if (busy || library == null || binding == null || binding.sourceTree == null) return;
+        importKind = kind;
+        importLibrary = library;
+        importBinding = binding;
+        Intent intent = new Intent(zip ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT_TREE);
+        if (zip) { intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("*/*"); }
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, zip ? PICK_ADDON_ZIP : PICK_ADDON_FOLDER);
+    }
+
+    private void stagePickedAddon(Uri uri, Intent data, boolean zip) {
+        File current = importLibrary;
+        LibraryBinding expected = importBinding;
+        String kind = importKind;
+        importLibrary = null; importBinding = null; importKind = null;
+        if (current == null || kind == null || !sameBinding(current, expected)) return;
+        boolean releaseFolderGrant = false;
+        if (!zip) {
+            if ((data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) {
+                showStatus("Add-on folder needs read access to stage its files."); return;
+            }
+            boolean alreadyPersisted = false;
+            for (android.content.UriPermission permission : getContentResolver().getPersistedUriPermissions())
+                if (permission.getUri().equals(uri) && permission.isReadPermission()) alreadyPersisted = true;
+            try {
+                if (!alreadyPersisted) getContentResolver().takePersistableUriPermission(uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                releaseFolderGrant = !alreadyPersisted;
+            }
+            catch (SecurityException denied) {
+                showStatus("Add-on folder needs lasting read access to stage its files."); return;
+            }
+        }
+        boolean releaseAfterStage = releaseFolderGrant;
+        busy = true;
+        showStatus("Staging one add-on privately for review…");
+        IO.execute(() -> {
+            AddonPackage addon = null;
+            try {
+                expected.requireCurrent(this);
+                if (zip) {
+                    String name;
+                    try (Cursor cursor = getContentResolver().query(uri,
+                            new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                        if (cursor == null || !cursor.moveToFirst()) throw new IOException("ZIP document is unavailable");
+                        name = cursor.getString(0);
+                    }
+                    if (name == null || !name.toLowerCase(Locale.ROOT).endsWith(".zip"))
+                        throw new IOException("Choose one ZIP file");
+                    InputStream stream = getContentResolver().openInputStream(uri);
+                    if (stream == null) throw new IOException("ZIP document cannot be read");
+                    addon = AddonPackage.fromZip(stream, importRoot(), kind);
+                } else addon = AddonPackage.fromFolder(
+                        new SafLibraryFiles(getContentResolver(), uri).root(), importRoot(), kind);
+                LibraryFiles.Node source = openSource(expected);
+                AddonHealth.Report health = AddonHealth.inspectStage(addon, source);
+                SafAddonDestination destination = new SafAddonDestination(getContentResolver(), expected.sourceTree);
+                AddonInstallTransaction.Review reviewed = AddonInstallTransaction.review(addon, destination, source);
+                AddonPackage staged = addon;
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false;
+                    String detail = "Destination: " + reviewed.kind + "/" + reviewed.name
+                            + "\nFiles: " + reviewed.files + " · bytes: " + reviewed.bytes
+                            + "\nSource: " + sourceFolderLabel()
+                            + "\nNo existing file is replaced. select.def is not edited."
+                            + "\n" + health.summary();
+                    showAddonReview(current, expected, staged, reviewed, detail, health);
+                } else AddonPackage.erase(staged.stageRoot); });
+            } catch (Exception error) {
+                if (addon != null) AddonPackage.erase(addon.stageRoot);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false; showStatus("Import review unavailable: " + error.getMessage());
+                } });
+            } finally {
+                if (releaseAfterStage) try {
+                    getContentResolver().releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (SecurityException ignored) { }
+            }
+        });
+    }
+
+    private void showAddonReview(File current, LibraryBinding expected, AddonPackage addon,
+                                 AddonInstallTransaction.Review reviewed, String detail, AddonHealth.Report health) {
+        LinearLayout panel = column();
+        panel.addView(sheetTitle("Review add-only import"),
+                new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(label(detail, compactLayout ? 14 : 15, false));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        if (!health.blocked) panel.addView(button("Install reviewed add-on", () -> {
+            dismissSheet(); executeAddonImport(current, expected, addon, reviewed, health.signature());
+        }), new LinearLayout.LayoutParams(-1, dp(48)));
+        panel.addView(button("Discard private stage", () -> {
+            dismissSheet(); AddonPackage.erase(addon.stageRoot);
+            showStatus("Add-on stage discarded; source unchanged.");
+        }), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
+    }
+
+    private void executeAddonImport(File current, LibraryBinding expected, AddonPackage addon,
+                                    AddonInstallTransaction.Review reviewed, String reviewedHealth) {
+        if (busy || !sameBinding(current, expected)) {
+            showStatus("Source changed; review import again."); return;
+        }
+        busy = true;
+        IO.execute(() -> {
+            try {
+                expected.requireCurrent(this);
+                AddonHealth.Report currentHealth = AddonHealth.inspectStage(addon, openSource(expected));
+                if (currentHealth.blocked || !currentHealth.signature().equals(reviewedHealth))
+                    throw new IOException("Add-on file references changed; review import again");
+                SafAddonDestination destination = new SafAddonDestination(getContentResolver(), expected.sourceTree);
+                AddonInstallTransaction.install(addon, destination, openSource(expected), reviewed);
+            } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Import stopped: " + error.getMessage());
+            } }); return; }
+            try {
+                LibraryScanner.Catalog scanned = scanWorking(current, expected);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    catalog = scanned; catalogEpoch++; busy = false; renderList();
+                    showStatus("Add-on installed at " + reviewed.kind + "/" + reviewed.name
+                            + ". Source roster unchanged; enable it separately if wanted.");
+                } });
+            } catch (IOException refresh) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                catalog = null; selected = null; busy = false; renderList();
+                showStatus("Add-on installed at " + reviewed.kind + "/" + reviewed.name
+                        + "; source refresh unavailable: " + refresh.getMessage());
+            } }); }
+        });
+    }
+
+    private void recoverImport(File stage) {
+        if (busy || library == null || binding == null || binding.sourceTree == null) return;
+        File current = library;
+        LibraryBinding expected = binding;
+        showDecisionSheet("Recover incomplete import",
+                "Verify the journal and provider documents. A verified final add-on is kept; only a journal-owned pending folder can be removed.",
+                "Run recovery", () -> {
+                    busy = true;
+                    IO.execute(() -> {
+                        try {
+                            expected.requireCurrent(this);
+                            AddonInstallTransaction.recover(stage,
+                                    new SafAddonDestination(getContentResolver(), expected.sourceTree));
+                            LibraryScanner.Catalog scanned = scanWorking(current, expected);
+                            runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                                catalog = scanned; catalogEpoch++; busy = false; renderList();
+                                showStatus("Import recovery completed. Check the library before another import.");
+                            } });
+                        } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                            busy = false; showStatus("Import recovery stopped: " + error.getMessage());
+                        } }); }
+                    });
+                });
+    }
+
+    private void showLibraryHealth() {
+        if (busy || selected == null || library == null || binding == null) {
+            showStatus("Choose an available character or stage first."); return;
+        }
+        LibraryScanner.Item item = selected;
+        File current = library;
+        LibraryBinding expected = binding;
+        busy = true;
+        IO.execute(() -> {
+            try {
+                AddonHealth.Report report = AddonHealth.inspectLibrary(item, openSource(expected));
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false;
+                    showDecisionSheet("Read-only health · " + item.name,
+                            report.summary() + "\nThis check does not repair, remove, or change roster entries.", "", null);
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Health report unavailable: " + error.getMessage());
+            } }); }
+        });
     }
 
     private void showCollections() {
@@ -1801,6 +2035,9 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
+            if (request == PICK_ADDON_ZIP || request == PICK_ADDON_FOLDER) {
+                importKind = null; importLibrary = null; importBinding = null;
+            }
             if (request == RECONNECT_TREE) reconnectLibrary = null;
             if (request == PICK_BACKUP_TREE) {
                 backupPickerLibrary = null; backupPickerBinding = null;
@@ -1809,6 +2046,10 @@ public final class MainActivity extends Activity {
             return;
         }
         Uri uri = data.getData();
+        if (request == PICK_ADDON_ZIP || request == PICK_ADDON_FOLDER) {
+            stagePickedAddon(uri, data, request == PICK_ADDON_ZIP);
+            return;
+        }
         if (request == PICK_BACKUP_TREE) {
             File expected = backupPickerLibrary;
             LibraryBinding expectedBinding = backupPickerBinding;
