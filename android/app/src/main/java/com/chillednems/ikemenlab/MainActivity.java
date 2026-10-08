@@ -294,6 +294,12 @@ public final class MainActivity extends Activity {
         list.setClipToPadding(false);
         list.setPadding(dp(2), dp(2), dp(8), dp(2));
         list.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        GradientDrawable browserSelector = new GradientDrawable();
+        browserSelector.setColor(Color.TRANSPARENT);
+        browserSelector.setCornerRadius(dp(9));
+        browserSelector.setStroke(dp(3), 0xffffc857);
+        list.setSelector(browserSelector);
+        list.setDrawSelectorOnTop(true);
         browserAdapter = new BrowserAdapter();
         list.setAdapter(browserAdapter);
         list.setOnItemClickListener((parent, view, position, id) -> activateBrowserItem(position));
@@ -329,9 +335,10 @@ public final class MainActivity extends Activity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_BROWSER_GRID, grid).apply();
         if (browserViewButton != null) browserViewButton.setText(grid ? "View: Grid" : "View: List");
         int first = list == null ? 0 : list.getFirstVisiblePosition();
+        int focused = list == null ? -1 : list.getSelectedItemPosition();
         configureBrowserLayout();
         if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
-        if (list != null) list.setSelection(Math.max(0, first));
+        if (list != null) list.setSelection(focused >= 0 ? focused : Math.max(0, first));
         showStatus(grid ? "Grid browser selected." : "List browser selected.");
     }
 
@@ -1601,7 +1608,7 @@ public final class MainActivity extends Activity {
             card.thumbnail.setImageBitmap(cached);
             card.thumbnail.setContentDescription(cached == null ? "Artwork unavailable or loading" : item.name + " thumbnail");
             if (cached == null && item.warning == null && item.defNode != null
-                    && thumbnailUnavailable.get(thumbnailKey) == null) loadThumbnail(item, card, thumbnailKey);
+                    && thumbnailUnavailable.get(thumbnailKey) == null) loadThumbnail(item, thumbnailKey);
             return card;
         }
     }
@@ -1648,7 +1655,7 @@ public final class MainActivity extends Activity {
                 + selectionKey(item) + "|" + (item.kind.equals("characters") ? "portrait" : "stage");
     }
 
-    private void loadThumbnail(LibraryScanner.Item item, BrowserCard card, String key) {
+    private void loadThumbnail(LibraryScanner.Item item, String key) {
         if (!thumbnailsLoading.add(key)) return;
         try {
             THUMBNAILS.execute(() -> {
@@ -1665,9 +1672,14 @@ public final class MainActivity extends Activity {
                     if (isDestroyed()) return;
                     if (result == null) thumbnailUnavailable.put(key, true);
                     else thumbnailCache.put(key, result);
-                    if (key.equals(card.boundThumbnailKey) && card.thumbnail.isAttachedToWindow()) {
-                        card.thumbnail.setImageBitmap(result);
-                        card.thumbnail.setContentDescription(result == null ? "Artwork unavailable" : item.name + " thumbnail");
+                    if (list == null) return;
+                    for (int i = 0; i < list.getChildCount(); i++) {
+                        View child = list.getChildAt(i);
+                        if (!(child instanceof BrowserCard)) continue;
+                        BrowserCard visible = (BrowserCard) child;
+                        if (!key.equals(visible.boundThumbnailKey)) continue;
+                        visible.thumbnail.setImageBitmap(result);
+                        visible.thumbnail.setContentDescription(result == null ? "Artwork unavailable" : item.name + " thumbnail");
                     }
                 });
             });
