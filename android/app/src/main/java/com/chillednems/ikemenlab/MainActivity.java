@@ -369,13 +369,28 @@ public final class MainActivity extends Activity {
 
     private TagStore tags() throws IOException {
         if (library == null) throw new IOException("Select a source folder first");
-        String source = binding != null && binding.sourceTree != null
-                ? binding.sourceTree.toString() : library.getCanonicalPath();
+        String source = currentSourceIdentity();
         if (!source.equals(tagSource)) {
             tagStore = new TagStore(new File(getFilesDir(), "manual-tags"), source);
             tagSource = source;
         }
         return tagStore;
+    }
+
+    private String currentSourceIdentity() throws IOException {
+        if (library == null) throw new IOException("Select a source folder first");
+        return binding != null && binding.sourceTree != null
+                ? binding.sourceTree.toString() : library.getCanonicalPath();
+    }
+
+    private CollectionStore collections(String identity) throws IOException {
+        return new CollectionStore(new File(getFilesDir(), "collections"), identity);
+    }
+
+    private String collectionSourceIdentity() throws IOException {
+        if (binding == null || binding.sourceTree == null)
+            throw new IOException("Reconnect the linked source to access its saved collections");
+        return binding.sourceTree.toString();
     }
 
     private void showFilters() {
@@ -614,10 +629,405 @@ public final class MainActivity extends Activity {
 
     private void showRosterActions() {
         if (busy) return;
-        showActionSheet("Roster actions", new String[]{"Arrange roster · select screen", "Refresh library", "Review export to linked source", "Backups and restore",
+        showActionSheet("Roster actions", new String[]{"Arrange roster · select screen", "Collections · working roster", "Refresh library", "Review export to linked source", "Backups and restore",
                         "Save a copy elsewhere", "Recovery"},
-                new Runnable[]{() -> showArrangement(0), this::refreshCatalog, this::reviewSourceExport, this::showBackups,
+                new Runnable[]{() -> showArrangement(0), this::showCollections, this::refreshCatalog, this::reviewSourceExport, this::showBackups,
                         this::pickExport, this::showRecovery});
+    }
+
+    private void showCollections() {
+        if (busy || library == null || binding == null || binding.sourceTree == null) {
+            showStatus("Reconnect the linked source to access its saved collections."); return;
+        }
+        File current = library;
+        LibraryBinding expected = binding;
+        String source;
+        try { source = collectionSourceIdentity(); }
+        catch (IOException error) { showStatus(error.getMessage()); return; }
+        busy = true;
+        IO.execute(() -> {
+            try {
+                List<CollectionStore.Record> saved = collections(source).list();
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false; renderCollections(saved);
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Collections unavailable: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void renderCollections(List<CollectionStore.Record> saved) {
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        labels.add("Create snapshot from working roster");
+        actions.add(this::createStaticCollection);
+        labels.add("Create smart collection · dynamic rules");
+        actions.add(this::createSmartCollection);
+        for (CollectionStore.Record record : saved) {
+            labels.add((record.smart ? "Smart · " : "Snapshot · ") + record.name);
+            actions.add(() -> showCollection(record));
+        }
+        showActionSheet("Collections · private to this source (" + saved.size() + ")",
+                labels.toArray(new String[0]), actions.toArray(new Runnable[0]));
+    }
+
+    private interface CollectionNameAction { void apply(String value); }
+
+    private void collectionNameInput(String title, String initial, CollectionNameAction action) {
+        collectionTextInput(title, "Collection names are stored privately for this source.", initial, action);
+    }
+
+    private void collectionTextInput(String title, String description, String initial, CollectionNameAction action) {
+        LinearLayout panel = column();
+        panel.addView(sheetTitle(title), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = column();
+        content.addView(label(description, 15, false));
+        EditText name = new EditText(this);
+        name.setSingleLine(true); name.setTextColor(Color.WHITE); name.setHint("Collection name");
+        name.setText(initial);
+        content.addView(name, new LinearLayout.LayoutParams(-1, dp(55)));
+        TextView feedback = label("", 14, false);
+        content.addView(feedback);
+        scroll.addView(content);
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        panel.addView(button("Save", () -> {
+            String value = name.getText().toString().trim();
+            if (value.isEmpty() || value.length() > 60 || value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0) {
+                feedback.setText("Use 1–60 characters on one line."); return;
+            }
+            dismissSheet(); action.apply(value);
+        }), new LinearLayout.LayoutParams(-1, dp(48)));
+        panel.addView(button("Close", this::dismissSheet), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
+        name.requestFocus();
+    }
+
+    private void createStaticCollection() {
+        String intendedSource;
+        try { intendedSource = collectionSourceIdentity(); }
+        catch (IOException error) { showStatus(error.getMessage()); return; }
+        collectionNameInput("New roster snapshot", "", name -> {
+            File current = library;
+            LibraryBinding expected = binding;
+            String source;
+            try { source = collectionSourceIdentity(); }
+            catch (IOException error) { showStatus(error.getMessage()); return; }
+            if (!intendedSource.equals(source)) { showStatus("Source changed; create the collection again."); return; }
+            busy = true;
+            IO.execute(() -> {
+                try {
+                    byte[] working = new SelectStorage(current).readWorking().bytes;
+                    CollectionStore.Record saved = collections(source).create(name, false, new RosterProfile(working).snapshot());
+                    runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                        busy = false; showCollection(saved);
+                        showStatus("Collection saved privately; source unchanged.");
+                    } });
+                } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false; showStatus("Collection not saved: " + error.getMessage());
+                } }); }
+            });
+        });
+    }
+
+    private void createSmartCollection() {
+        String intendedSource;
+        try { intendedSource = collectionSourceIdentity(); }
+        catch (IOException error) { showStatus(error.getMessage()); return; }
+        collectionNameInput("New smart collection", "", name -> {
+            try {
+                if (!intendedSource.equals(collectionSourceIdentity())) {
+                    showStatus("Source changed; create the collection again."); return;
+                }
+            } catch (IOException error) { showStatus(error.getMessage()); return; }
+            CollectionStore.Record draft = new CollectionStore.Record(java.util.UUID.randomUUID().toString(), name, true);
+            draft.sourceIdentity = intendedSource;
+            showSmartRuleChoices(draft, true);
+        });
+    }
+
+    private void showCollection(CollectionStore.Record record) {
+        String count = record.smart ? record.rules.size() + " supported rule(s), re-evaluated on preview"
+                : record.characters.size() + " character slots, " + record.stages.size() + " stages";
+        showActionSheet(record.name + " · " + count, new String[]{
+                "Preview activation · private working roster only",
+                record.smart ? "Edit dynamic rules" : "Edit ordered entries",
+                "Rename collection", "Delete collection"}, new Runnable[]{
+                () -> previewCollection(record),
+                record.smart ? () -> showSmartRules(record) : () -> showCollectionEditor(record),
+                () -> collectionNameInput("Rename collection", record.name,
+                        name -> changeCollection(record, changed -> changed.name = name)),
+                () -> showDecisionSheet("Delete " + record.name,
+                        "Delete this private collection? The working roster and source stay unchanged.",
+                        "Delete collection", () -> deleteCollection(record))});
+    }
+
+    private interface CollectionChange { void apply(CollectionStore.Record record) throws IOException; }
+
+    private void changeCollection(CollectionStore.Record record, CollectionChange change) {
+        if (busy || library == null) return;
+        File current = library;
+        LibraryBinding expected = binding;
+        String source;
+        try { source = collectionSourceIdentity(); }
+        catch (IOException error) { showStatus(error.getMessage()); return; }
+        if (!source.equals(record.sourceIdentity)) { showStatus("Source changed; reopen collections."); return; }
+        busy = true;
+        IO.execute(() -> {
+            try {
+                CollectionStore store = collections(source);
+                CollectionStore.Record fresh = store.get(record.id);
+                change.apply(fresh);
+                store.save(fresh);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false; showCollection(fresh);
+                    showStatus("Collection saved privately; source unchanged.");
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Collection not changed: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void showCollectionEditor(CollectionStore.Record record) {
+        String selectedItem = selected == null ? "Choose an item in the browser first" : "Add selected · " + selected.name;
+        showActionSheet("Edit " + record.name + " · ordered snapshot", new String[]{
+                "Character slots · " + record.characters.size(), "Stage entries · " + record.stages.size(),
+                selectedItem, "Add randomselect slot", "Add empty slot", "Back to collection"}, new Runnable[]{
+                () -> showCollectionEntries(record, true, 0), () -> showCollectionEntries(record, false, 0),
+                () -> {
+                    LibraryScanner.Item item = selected;
+                    if (item == null || item.warning != null || item.defNode == null) {
+                        showStatus("Select an available character or stage in the browser first."); return;
+                    }
+                    changeCollection(record, changed -> {
+                        if (item.kind.equals("characters")) changed.characters.add(item.reference);
+                        else changed.stages.add(item.reference);
+                    });
+                },
+                () -> changeCollection(record, changed -> changed.characters.add("randomselect")),
+                () -> changeCollection(record, changed -> changed.characters.add("empty")),
+                () -> showCollection(record)});
+    }
+
+    private void showCollectionEntries(CollectionStore.Record record, boolean characters, int page) {
+        List<String> entries = characters ? record.characters : record.stages;
+        int size = 40;
+        int pages = Math.max(1, (entries.size() + size - 1) / size);
+        int current = Math.max(0, Math.min(page, pages - 1));
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        if (current > 0) { labels.add("Previous page"); actions.add(() -> showCollectionEntries(record, characters, current - 1)); }
+        for (int i = current * size; i < Math.min(entries.size(), (current + 1) * size); i++) {
+            final int position = i;
+            String text = entries.get(i);
+            labels.add((i + 1) + ". " + (text.length() > 80 ? text.substring(0, 79) + "…" : text));
+            actions.add(() -> showCollectionEntryActions(record, characters, position, current));
+        }
+        if (current + 1 < pages) { labels.add("Next page"); actions.add(() -> showCollectionEntries(record, characters, current + 1)); }
+        labels.add("Back to editor"); actions.add(() -> showCollectionEditor(record));
+        showActionSheet((characters ? "Character slots" : "Stage entries") + " · page " + (current + 1) + "/" + pages,
+                labels.toArray(new String[0]), actions.toArray(new Runnable[0]));
+    }
+
+    private void showCollectionEntryActions(CollectionStore.Record record, boolean characters, int position, int page) {
+        showActionSheet("Entry " + (position + 1), new String[]{"Move up", "Move down", "Remove entry", "Back to entries"},
+                new Runnable[]{
+                        () -> moveCollectionEntry(record, characters, position, -1),
+                        () -> moveCollectionEntry(record, characters, position, 1),
+                        () -> changeCollection(record, changed -> {
+                            List<String> entries = characters ? changed.characters : changed.stages;
+                            if (position >= entries.size()) throw new IOException("Collection changed; reopen entries");
+                            entries.remove(position);
+                        }),
+                        () -> showCollectionEntries(record, characters, page)});
+    }
+
+    private void moveCollectionEntry(CollectionStore.Record record, boolean characters, int position, int delta) {
+        changeCollection(record, changed -> {
+            List<String> entries = characters ? changed.characters : changed.stages;
+            int next = position + delta;
+            if (position < 0 || next < 0 || next >= entries.size()) throw new IOException("Entry is at the collection edge");
+            java.util.Collections.swap(entries, position, next);
+        });
+    }
+
+    private void showSmartRules(CollectionStore.Record record) {
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        labels.add("Combine rules · " + (record.allRules ? "All (AND)" : "Any (OR)"));
+        actions.add(() -> changeCollection(record, changed -> changed.allRules = !changed.allRules));
+        labels.add("Add supported rule (max 6)");
+        actions.add(() -> showSmartRuleChoices(record, false));
+        for (int i = 0; i < record.rules.size(); i++) {
+            int position = i;
+            CollectionStore.Rule rule = record.rules.get(i);
+            labels.add((i + 1) + ". " + rule.field + " · " + rule.value);
+            actions.add(() -> showActionSheet("Rule " + (position + 1), new String[]{"Remove rule", "Back to rules"},
+                    new Runnable[]{() -> changeCollection(record, changed -> {
+                        if (changed.rules.size() <= 1) throw new IOException("Smart collection needs at least one rule");
+                        if (position >= changed.rules.size()) throw new IOException("Rules changed; reopen collection");
+                        changed.rules.remove(position);
+                    }), () -> showSmartRules(record)}));
+        }
+        labels.add("Back to collection"); actions.add(() -> showCollection(record));
+        showActionSheet("Smart rules · current source is re-evaluated on preview",
+                labels.toArray(new String[0]), actions.toArray(new Runnable[0]));
+    }
+
+    private void showSmartRuleChoices(CollectionStore.Record record, boolean creating) {
+        if (record.rules.size() >= 6) { showStatus("Smart collections support at most six rules."); return; }
+        String[] labels = {"Name contains…", "Author contains…", "Manual tag is…", "Inferred cue is…",
+                "Type · Characters", "Type · Stages", "Status · Enabled", "Status · Disabled", "Status · Unlisted"};
+        Runnable[] actions = {
+                () -> promptSmartValue(record, creating, "name"),
+                () -> promptSmartValue(record, creating, "author"),
+                () -> promptSmartValue(record, creating, "manualTag"),
+                () -> promptSmartValue(record, creating, "inferredTag"),
+                () -> addSmartRule(record, creating, "type", "Characters"),
+                () -> addSmartRule(record, creating, "type", "Stages"),
+                () -> addSmartRule(record, creating, "status", "Enabled"),
+                () -> addSmartRule(record, creating, "status", "Disabled"),
+                () -> addSmartRule(record, creating, "status", "Unlisted")};
+        showActionSheet("Supported smart fields · " + (creating ? "choose first rule" : "add rule"), labels, actions);
+    }
+
+    private void promptSmartValue(CollectionStore.Record record, boolean creating, String field) {
+        collectionTextInput("Smart rule · " + field,
+                "Supported field only. This rule is re-evaluated against the linked source on preview.", "",
+                value -> addSmartRule(record, creating, field, value));
+    }
+
+    private void addSmartRule(CollectionStore.Record record, boolean creating, String field, String value) {
+        if (!creating) {
+            changeCollection(record, changed -> changed.rules.add(new CollectionStore.Rule(field, value)));
+            return;
+        }
+        File current = library;
+        LibraryBinding expected = binding;
+        String source;
+        try { source = collectionSourceIdentity(); }
+        catch (IOException error) { showStatus(error.getMessage()); return; }
+        if (!source.equals(record.sourceIdentity)) { showStatus("Source changed; reopen collections."); return; }
+        record.rules.add(new CollectionStore.Rule(field, value));
+        busy = true;
+        IO.execute(() -> {
+            try {
+                collections(source).save(record);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false; showCollection(record);
+                    showStatus("Smart collection saved; rules re-evaluate on preview.");
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Smart collection not saved: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void deleteCollection(CollectionStore.Record record) {
+        File current = library;
+        LibraryBinding expected = binding;
+        String source;
+        try { source = collectionSourceIdentity(); }
+        catch (IOException error) { showStatus(error.getMessage()); return; }
+        if (!source.equals(record.sourceIdentity)) { showStatus("Source changed; reopen collections."); return; }
+        busy = true;
+        IO.execute(() -> {
+            try {
+                collections(source).delete(record.id);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false; showStatus("Private collection deleted; working roster unchanged."); showCollections();
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Delete stopped: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void previewCollection(CollectionStore.Record record) {
+        if (busy || library == null || catalog == null || binding == null || binding.sourceTree == null) {
+            showStatus("Reconnect and refresh the source before activating a collection."); return;
+        }
+        if (screenpackStatus != null && screenpackStatus.knownAlternate) {
+            showDecisionSheet("Collection activation unavailable",
+                    "This screenpack uses " + screenpackStatus.select + ". Collections apply to the private working data/select.def, which is not the active screenpack roster.",
+                    "", null);
+            return;
+        }
+        File current = library;
+        LibraryBinding expected = binding;
+        long epoch = catalogEpoch;
+        String source;
+        try { source = collectionSourceIdentity(); }
+        catch (IOException error) { showStatus(error.getMessage()); return; }
+        if (!source.equals(record.sourceIdentity)) { showStatus("Source changed; reopen collections."); return; }
+        busy = true;
+        IO.execute(() -> {
+            try {
+                CollectionStore.Record fresh = collections(source).get(record.id);
+                TagStore manual = new TagStore(new File(getFilesDir(), "manual-tags"), source);
+                byte[] working = new SelectStorage(current).readWorking().bytes;
+                LibraryFiles.Node activeSource = openSource(expected);
+                CollectionPlan.requireActiveWorkingRoster(activeSource);
+                LibraryScanner.Catalog freshCatalog = LibraryScanner.scan(activeSource, working);
+                CollectionPlan plan = CollectionPlan.prepare(working, fresh, freshCatalog, manual);
+                runOnUiThread(() -> { if (sameBinding(current, expected) && catalogEpoch == epoch) {
+                    busy = false;
+                    String message = (fresh.smart ? "Dynamic rules re-evaluated against the current library.\n" : "Saved ordered entries.\n")
+                            + "Characters: " + plan.entries.characters.size() + " · Stages: " + plan.entries.stages.size()
+                            + "\nWorking roster SHA-256: " + plan.workingSha.substring(0, 12) + "…"
+                            + "\nUnknown select.def sections and inactive lines are retained. Source files stay unchanged until separate Export review."
+                            + (screenpackStatus != null && screenpackStatus.warning != null ? "\nScreenpack: " + screenpackStatus.warning : "")
+                            + (plan.missing.isEmpty() ? "" : "\nMissing references (activation blocked): " + plan.missing.size()
+                            + "\n" + String.join(", ", plan.missing.subList(0, Math.min(5, plan.missing.size()))))
+                            + (!plan.changed ? "\nWorking roster already matches this collection." : "");
+                    showDecisionSheet("Review collection activation · " + fresh.name, message,
+                            "Activate working roster", plan.missing.isEmpty() && plan.changed
+                                    ? () -> activateCollection(current, expected, source, epoch, plan, fresh.id) : null);
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Collection preview stopped: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void activateCollection(File current, LibraryBinding expected, String source, long epoch,
+                                    CollectionPlan plan, String id) {
+        if (busy || !sameBinding(current, expected) || catalogEpoch != epoch) {
+            showStatus("Library changed after review; preview the collection again."); return;
+        }
+        busy = true;
+        IO.execute(() -> {
+            try {
+                expected.requireCurrent(this);
+                CollectionPlan.requireActiveWorkingRoster(openSource(expected));
+                SelectStorage storage = new SelectStorage(current);
+                byte[] working = storage.readWorking().bytes;
+                LibraryScanner.Catalog currentCatalog = scanWorking(current, expected);
+                CollectionPlan refreshed = CollectionPlan.prepare(working, collections(source).get(id), currentCatalog,
+                        new TagStore(new File(getFilesDir(), "manual-tags"), source));
+                if (!plan.workingSha.equals(refreshed.workingSha) || !refreshed.missing.isEmpty()
+                        || !java.util.Arrays.equals(plan.replacement, refreshed.replacement))
+                    throw new IOException("Collection, source, or working roster changed; review activation again");
+                storage.commitWorking(plan.workingSha, plan.replacement,
+                        "collection:activate:" + id, retention());
+            } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Collection activation stopped: " + error.getMessage());
+            } }); return; }
+            try {
+                LibraryScanner.Catalog scanned = scanWorking(current, expected);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    catalog = scanned; catalogEpoch++;
+                    selected = selected == null ? null : find(scanned, selected);
+                    busy = false; renderList();
+                    showStatus("Collection activated in private working roster. Review Export to change source select.def.");
+                } });
+            } catch (IOException refresh) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                catalog = null; selected = null; busy = false; renderList();
+                showStatus("Collection activated locally. Source refresh unavailable: " + refresh.getMessage());
+            } }); }
+        });
     }
 
     private void showArrangement(int page) {
