@@ -32,6 +32,8 @@ public final class RosterChangeSummaryTest {
         assertEquals(1, summary.disabled);
         assertEquals(0, summary.added);
         assertEquals(0, summary.removed);
+        assertFalse(summary.otherContentChanged);
+        assertEquals(0, summary.reorderedPositions);
     }
 
     @Test public void reportsOnlyOrderChangeAcrossRandomEmptyAndDuplicateOptions() throws Exception {

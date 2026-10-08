@@ -713,7 +713,7 @@ public final class MainActivity extends Activity {
     private static String changeCounts(RosterChangeSummary changes) {
         return "Enabled " + changes.enabled + " · Disabled " + changes.disabled
                 + "\nAdded " + changes.added + " · Removed " + changes.removed
-                + "\nRoster order changed: " + changes.reorderedPositions + " positions"
+                + (changes.reorderedPositions > 0 ? "\nRoster order changed: " + changes.reorderedPositions + " positions" : "")
                 + (changes.otherContentChanged ? "\nOther select.def content changed" : "");
     }
 

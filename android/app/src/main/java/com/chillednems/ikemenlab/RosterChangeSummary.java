@@ -33,6 +33,7 @@ final class RosterChangeSummary {
             else if (previous && !entry.getValue()) disabled++;
         }
         for (String key : oldEntries.keySet()) if (!newEntries.containsKey(key)) removed++;
+        boolean hasCountedChange = enabled != 0 || disabled != 0 || added != 0 || removed != 0;
         int reordered = 0;
         boolean other = false;
         if (!Arrays.equals(before, after)) {
@@ -43,9 +44,10 @@ final class RosterChangeSummary {
                 if (sameMultiset(oldSlots, newSlots)) {
                     for (int i = 0; i < oldSlots.size(); i++)
                         if (!oldSlots.get(i).equals(newSlots.get(i))) reordered++;
-                    other = !Arrays.equals(oldOrder.bytesIgnoringSlotText(), newOrder.bytesIgnoringSlotText());
-                } else other = true;
-            } catch (IOException previewLimit) { other = true; }
+                    other = !hasCountedChange
+                            && !Arrays.equals(oldOrder.bytesIgnoringSlotText(), newOrder.bytesIgnoringSlotText());
+                } else other = !hasCountedChange;
+            } catch (IOException previewLimit) { other = !hasCountedChange; }
         }
         return new RosterChangeSummary(enabled, disabled, added, removed, reordered, other);
     }
