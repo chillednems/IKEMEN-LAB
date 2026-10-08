@@ -31,10 +31,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.util.LruCache;
-
-import androidx.recyclerview.widget.GridLayoutManager;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
+import android.widget.BaseAdapter;
+import android.widget.GridView;
 
 import java.io.File;
 import java.io.IOException;
@@ -76,13 +74,14 @@ public final class MainActivity extends Activity {
     private FrameLayout screenFrame;
     private LinearLayout activeSheet;
     private View sheetPreviousFocus;
-    private RecyclerView list;
+    private GridView list;
     private BrowserAdapter browserAdapter;
     private final LruCache<String, Bitmap> thumbnailCache = new LruCache<String, Bitmap>(16 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
     };
     private final LruCache<String, Boolean> thumbnailUnavailable = new LruCache<>(256);
     private final Set<String> thumbnailsLoading = new HashSet<>();
+    private boolean thumbnailRetryScheduled;
     private LinearLayout detail;
     private Button rosterButton;
     private Button browserViewButton;
@@ -291,13 +290,13 @@ public final class MainActivity extends Activity {
         LinearLayout panels = new LinearLayout(this);
         panels.setOrientation(landscape ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         root.addView(panels, new LinearLayout.LayoutParams(-1, 0, 1));
-        list = new RecyclerView(this);
+        list = new GridView(this);
         list.setClipToPadding(false);
         list.setPadding(dp(2), dp(2), dp(8), dp(2));
-        list.setItemViewCacheSize(6);
         list.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         browserAdapter = new BrowserAdapter();
         list.setAdapter(browserAdapter);
+        list.setOnItemClickListener((parent, view, position, id) -> activateBrowserItem(position));
         configureBrowserLayout();
         detail = column();
         ScrollView detailScroll = new ScrollView(this);
@@ -329,24 +328,21 @@ public final class MainActivity extends Activity {
         boolean grid = !browserGrid();
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_BROWSER_GRID, grid).apply();
         if (browserViewButton != null) browserViewButton.setText(grid ? "View: Grid" : "View: List");
-        int first = list == null || list.getLayoutManager() == null ? 0
-                : ((LinearLayoutManager) list.getLayoutManager()).findFirstVisibleItemPosition();
+        int first = list == null ? 0 : list.getFirstVisiblePosition();
         configureBrowserLayout();
         if (browserAdapter != null) browserAdapter.notifyDataSetChanged();
-        if (list != null) list.scrollToPosition(Math.max(0, first));
+        if (list != null) list.setSelection(Math.max(0, first));
         showStatus(grid ? "Grid browser selected." : "List browser selected.");
     }
 
     private void configureBrowserLayout() {
         if (list == null) return;
-        if (browserGrid()) {
-            int columns = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 3 : 2;
-            GridLayoutManager manager = new GridLayoutManager(this, columns);
-            manager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
-                @Override public int getSpanSize(int position) { return browserAdapter != null && browserAdapter.isMessage() ? columns : 1; }
-            });
-            list.setLayoutManager(manager);
-        } else list.setLayoutManager(new LinearLayoutManager(this));
+        int columns = !browserGrid() || browserAdapter != null && browserAdapter.isMessage() ? 1
+                : getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 3 : 2;
+        list.setNumColumns(columns);
+        list.setHorizontalSpacing(dp(4));
+        list.setVerticalSpacing(dp(4));
+        list.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
     }
 
     private void showSettings() {
@@ -1548,100 +1544,103 @@ public final class MainActivity extends Activity {
         renderDetail();
     }
 
-    private final class BrowserAdapter extends RecyclerView.Adapter<BrowserAdapter.Card> {
+    private final class BrowserAdapter extends BaseAdapter {
         private final List<LibraryScanner.Item> items = new ArrayList<>();
         private String message;
 
         boolean isMessage() { return message != null; }
 
+        int positionOf(String key) {
+            for (int i = 0; i < items.size(); i++) if (selectionKey(items.get(i)).equals(key)) return i;
+            return -1;
+        }
+
         void replace(List<LibraryScanner.Item> next, String emptyMessage) {
             items.clear(); items.addAll(next);
             message = emptyMessage;
+            configureBrowserLayout();
             notifyDataSetChanged();
         }
 
-        @Override public int getItemCount() { return isMessage() ? 1 : items.size(); }
+        @Override public int getCount() { return isMessage() ? 1 : items.size(); }
+        @Override public Object getItem(int position) { return isMessage() ? message : items.get(position); }
+        @Override public long getItemId(int position) {
+            if (isMessage()) return Long.MIN_VALUE;
+            String key = selectionKey(items.get(position));
+            long hash = 0xcbf29ce484222325L;
+            for (int i = 0; i < key.length(); i++) hash = (hash ^ key.charAt(i)) * 0x100000001b3L;
+            return hash;
+        }
+        @Override public boolean hasStableIds() { return true; }
+        @Override public int getViewTypeCount() { return 3; }
         @Override public int getItemViewType(int position) { return isMessage() ? 2 : browserGrid() ? 1 : 0; }
 
-        @Override public Card onCreateViewHolder(ViewGroup parent, int type) {
-            if (type == 2) {
-                TextView text = label("", 16, false);
-                text.setLayoutParams(new RecyclerView.LayoutParams(-1, dp(90)));
-                return new Card(text, null, text);
+        @Override public View getView(int position, View reusable, ViewGroup parent) {
+            if (isMessage()) {
+                TextView text = reusable instanceof TextView ? (TextView) reusable : label("", 16, false);
+                text.setText(message);
+                text.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(90)));
+                return text;
             }
-            boolean grid = type == 1;
-            LinearLayout card = new LinearLayout(MainActivity.this);
-            card.setOrientation(grid ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
-            card.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            card.setPadding(dp(5), dp(5), dp(5), dp(5));
-            card.setFocusable(true); card.setClickable(true);
-            card.setLayoutParams(new RecyclerView.LayoutParams(-1, dp(grid ? 148 : 78)));
-            ImageView thumbnail = new ImageView(MainActivity.this);
-            thumbnail.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            thumbnail.setBackgroundColor(0xff172530);
-            thumbnail.setFocusable(false);
-            card.addView(thumbnail, new LinearLayout.LayoutParams(dp(grid ? 92 : 66), dp(grid ? 88 : 66)));
-            TextView title = label("", grid ? 13 : 16, false);
-            title.setMaxLines(grid ? 2 : 3);
-            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            card.addView(title, grid ? new LinearLayout.LayoutParams(-1, 0, 1)
-                    : new LinearLayout.LayoutParams(0, -2, 1));
-            return new Card(card, thumbnail, title);
-        }
-
-        @Override public void onBindViewHolder(Card holder, int position) {
-            if (isMessage()) { holder.title.setText(message); return; }
+            boolean grid = browserGrid();
+            BrowserCard card = reusable instanceof BrowserCard && ((BrowserCard) reusable).grid == grid
+                    ? (BrowserCard) reusable : new BrowserCard(grid);
             LibraryScanner.Item item = items.get(position);
             String key = selectionKey(item);
             String state = item.enabled == null ? "Unlisted" : item.enabled ? "Enabled" : "Disabled";
-            holder.title.setText(item.name + "\n" + (item.kind.equals("characters") ? "Character" : "Stage")
+            card.title.setText(item.name + "\n" + (item.kind.equals("characters") ? "Character" : "Stage")
                     + " · " + state + (item.warning == null ? "" : " · MISSING"));
-            holder.title.setTextColor(item.warning == null ? Color.WHITE : 0xffff6b6b);
-            holder.itemView.setTag(key);
-            holder.itemView.setContentDescription(item.name + ", " + state
+            card.title.setTextColor(item.warning == null ? Color.WHITE : 0xffff6b6b);
+            card.setTag(key);
+            card.setContentDescription(item.name + ", " + state
                     + (item.warning == null ? "" : ", missing reference"));
-            focusStyle(holder.itemView, selected != null && key.equals(selectionKey(selected)));
-            holder.itemView.setOnClickListener(view -> {
-                RowActivation.Action action = RowActivation.decide(
-                        selected == null ? null : selectionKey(selected), key, busy);
-                if (action == RowActivation.Action.IGNORE) return;
-                if (action == RowActivation.Action.TOGGLE) { toggleSelected(item.enabled == null || !item.enabled); return; }
-                int currentPosition = holder.getBindingAdapterPosition();
-                if (currentPosition == RecyclerView.NO_POSITION) return;
-                String previous = selected == null ? null : selectionKey(selected);
-                selected = item;
-                if (previous != null) {
-                    for (int i = 0; i < items.size(); i++) if (selectionKey(items.get(i)).equals(previous)) { notifyItemChanged(i); break; }
-                }
-                notifyItemChanged(currentPosition);
-                renderDetail();
-                view.post(() -> {
-                    View replacement = list.findViewWithTag(key);
-                    if (replacement != null) replacement.requestFocus();
-                });
-            });
+            focusStyle(card, selected != null && key.equals(selectionKey(selected)));
             String thumbnailKey = thumbnailKey(item);
-            holder.boundThumbnailKey = thumbnailKey;
+            card.boundThumbnailKey = thumbnailKey;
             Bitmap cached = thumbnailCache.get(thumbnailKey);
-            holder.thumbnail.setImageBitmap(cached);
-            holder.thumbnail.setContentDescription(cached == null ? "Artwork unavailable or loading" : item.name + " thumbnail");
+            card.thumbnail.setImageBitmap(cached);
+            card.thumbnail.setContentDescription(cached == null ? "Artwork unavailable or loading" : item.name + " thumbnail");
             if (cached == null && item.warning == null && item.defNode != null
-                    && thumbnailUnavailable.get(thumbnailKey) == null) loadThumbnail(item, holder, thumbnailKey);
+                    && thumbnailUnavailable.get(thumbnailKey) == null) loadThumbnail(item, card, thumbnailKey);
+            return card;
         }
+    }
 
-        @Override public void onViewRecycled(Card holder) {
-            holder.boundThumbnailKey = null;
-            if (holder.thumbnail != null) holder.thumbnail.setImageBitmap(null);
+    private final class BrowserCard extends LinearLayout {
+        final boolean grid;
+        final ImageView thumbnail;
+        final TextView title;
+        String boundThumbnailKey;
+        BrowserCard(boolean grid) {
+            super(MainActivity.this);
+            this.grid = grid;
+            setOrientation(grid ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+            setGravity(android.view.Gravity.CENTER_VERTICAL);
+            setPadding(dp(5), dp(5), dp(5), dp(5));
+            setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(grid ? 148 : 78)));
+            thumbnail = new ImageView(MainActivity.this);
+            thumbnail.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            thumbnail.setBackgroundColor(0xff172530);
+            addView(thumbnail, new LinearLayout.LayoutParams(dp(grid ? 92 : 66), dp(grid ? 88 : 66)));
+            title = label("", grid ? 13 : 16, false);
+            title.setMaxLines(grid ? 2 : 3);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            addView(title, grid ? new LinearLayout.LayoutParams(-1, 0, 1)
+                    : new LinearLayout.LayoutParams(0, -2, 1));
         }
+    }
 
-        final class Card extends RecyclerView.ViewHolder {
-            final ImageView thumbnail;
-            final TextView title;
-            String boundThumbnailKey;
-            Card(View root, ImageView thumbnail, TextView title) {
-                super(root); this.thumbnail = thumbnail; this.title = title;
-            }
-        }
+    private void activateBrowserItem(int position) {
+        if (browserAdapter == null || browserAdapter.isMessage() || position < 0 || position >= browserAdapter.items.size()) return;
+        LibraryScanner.Item item = browserAdapter.items.get(position);
+        String key = selectionKey(item);
+        RowActivation.Action action = RowActivation.decide(selected == null ? null : selectionKey(selected), key, busy);
+        if (action == RowActivation.Action.IGNORE) return;
+        if (action == RowActivation.Action.TOGGLE) { toggleSelected(item.enabled == null || !item.enabled); return; }
+        selected = item;
+        browserAdapter.notifyDataSetChanged();
+        renderDetail();
+        list.setSelection(position);
     }
 
     private String thumbnailKey(LibraryScanner.Item item) {
@@ -1649,7 +1648,7 @@ public final class MainActivity extends Activity {
                 + selectionKey(item) + "|" + (item.kind.equals("characters") ? "portrait" : "stage");
     }
 
-    private void loadThumbnail(LibraryScanner.Item item, BrowserAdapter.Card holder, String key) {
+    private void loadThumbnail(LibraryScanner.Item item, BrowserCard card, String key) {
         if (!thumbnailsLoading.add(key)) return;
         try {
             THUMBNAILS.execute(() -> {
@@ -1666,13 +1665,25 @@ public final class MainActivity extends Activity {
                     if (isDestroyed()) return;
                     if (result == null) thumbnailUnavailable.put(key, true);
                     else thumbnailCache.put(key, result);
-                    if (key.equals(holder.boundThumbnailKey) && holder.thumbnail.isAttachedToWindow()) {
-                        holder.thumbnail.setImageBitmap(result);
-                        holder.thumbnail.setContentDescription(result == null ? "Artwork unavailable" : item.name + " thumbnail");
+                    if (key.equals(card.boundThumbnailKey) && card.thumbnail.isAttachedToWindow()) {
+                        card.thumbnail.setImageBitmap(result);
+                        card.thumbnail.setContentDescription(result == null ? "Artwork unavailable" : item.name + " thumbnail");
                     }
                 });
             });
-        } catch (java.util.concurrent.RejectedExecutionException full) { thumbnailsLoading.remove(key); }
+        } catch (java.util.concurrent.RejectedExecutionException full) {
+            thumbnailsLoading.remove(key);
+            scheduleThumbnailRetry();
+        }
+    }
+
+    private void scheduleThumbnailRetry() {
+        if (thumbnailRetryScheduled || list == null) return;
+        thumbnailRetryScheduled = true;
+        list.postDelayed(() -> {
+            thumbnailRetryScheduled = false;
+            if (!isDestroyed() && browserAdapter != null) browserAdapter.notifyDataSetChanged();
+        }, 350);
     }
 
     private void renderDetail() {
@@ -1840,8 +1851,8 @@ public final class MainActivity extends Activity {
                     busy = false;
                     renderList();
                     if (selected != null) {
-                        View row = list.findViewWithTag(selectionKey(selected));
-                        if (row != null) row.requestFocus();
+                        int position = browserAdapter.positionOf(selectionKey(selected));
+                        if (position >= 0) { list.setSelection(position); list.requestFocus(); }
                     }
                     showStatus("Working roster updated. Review Export to apply it to the linked folder.");
                 });
@@ -1873,7 +1884,11 @@ public final class MainActivity extends Activity {
         if (event.getAction() == KeyEvent.ACTION_DOWN && (event.getSource() & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD) {
             if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A) {
                 View focused = getCurrentFocus();
-                if (focused != null) focused.performClick();
+                if (focused == list && list != null) {
+                    int position = list.getSelectedItemPosition();
+                    if (position < 0) position = list.getFirstVisiblePosition();
+                    activateBrowserItem(position);
+                } else if (focused != null) focused.performClick();
                 return true;
             }
             if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B) { handleBack(); return true; }
@@ -1900,6 +1915,24 @@ public final class MainActivity extends Activity {
                 int direction = ControllerPolicy.stickDirection(x, y);
                 if (direction != 0) {
                     View focused = getCurrentFocus();
+                    if (focused == list && browserAdapter != null && !browserAdapter.isMessage()) {
+                        int position = Math.max(0, list.getSelectedItemPosition());
+                        int columns = browserGrid()
+                                ? (getResources().getConfiguration().orientation
+                                == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 3 : 2) : 1;
+                        int nextPosition = switch (direction) {
+                            case ControllerPolicy.UP -> position - columns;
+                            case ControllerPolicy.DOWN -> position + columns;
+                            case ControllerPolicy.LEFT -> position % columns == 0 ? -1 : position - 1;
+                            case ControllerPolicy.RIGHT -> position % columns == columns - 1 ? -1 : position + 1;
+                            default -> -1;
+                        };
+                        if (nextPosition >= 0 && nextPosition < browserAdapter.getCount()) {
+                            list.setSelection(nextPosition);
+                            lastStickMove = now;
+                            return true;
+                        }
+                    }
                     View origin = focused == null ? root : focused;
                     View next = switch (direction) {
                         case ControllerPolicy.LEFT -> origin.focusSearch(View.FOCUS_LEFT);
