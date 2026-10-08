@@ -55,4 +55,7 @@ android {
     testOptions { unitTests.returnDefaultValues = true }
 }
 
-dependencies { testImplementation 'junit:junit:4.13.2' }
+dependencies {
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    testImplementation 'junit:junit:4.13.2'
+}
