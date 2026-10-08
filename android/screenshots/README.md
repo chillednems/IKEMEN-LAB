@@ -51,3 +51,27 @@ Settings shows the selected source, preview mode, orientation, backup destinatio
 ![Character preview setting with a selected choice](android-v0.6.0-selected-preview.png)
 
 The preview setting marks **Neutral over portrait** as the current choice with a checkmark and text.
+
+## Screenpack-aware roster (Android feature branch)
+
+![Approximate select screen and roster arrangement with a synthetic 1-by-3 screenpack](android-screenpack-roster-portrait.png)
+
+The static preview reads the active motif's select-screen capacity and shows the five occupied roster slots, including random and empty slots, with two beyond capacity. This is an approximate slot-order view; in-game placement may differ. The capture uses a self-created demonstration library and the tested `600f115` debug APK.
+
+## Recycled Android browser (feature branch)
+
+![Synthetic character thumbnails in the Android library grid](android-browser-grid-synthetic.png)
+
+The grid displays visible character thumbnails from a self-created demonstration library and a selected item's details. The list/grid control preserves controller selection while switching views. Captured from the independently tested `b251c11` debug APK.
+
+## Source facts and static input definitions (feature branch)
+
+![Bounded DEF facts for a synthetic character](android-metadata-facts-synthetic.png)
+
+The facts view reads declared character metadata from a self-created DEF file. The [input definitions](android-metadata-cmd-synthetic.png) view lists static CMD labels and inputs without claiming verified playable moves. Both captures use the independently tested `a1cc773` debug APK; the later `Filter` toolbar wording change does not affect these views.
+
+## Source-specific collections (feature branch)
+
+![Synthetic snapshot and smart collections for one linked source](android-collections-list-synthetic.png)
+
+The private collection list shows a named snapshot and a dynamic smart collection for self-created demonstration content. The [activation review](android-collections-review-synthetic.png) shows the ordered character and stage counts and makes clear that activation changes the private working roster; the linked source requires a separate Export review. Both captures use the independently tested integrated `e80fbac` debug APK.
