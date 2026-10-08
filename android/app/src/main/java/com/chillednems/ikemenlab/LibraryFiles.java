@@ -23,6 +23,7 @@ final class LibraryFiles {
         InputStream open() throws IOException;
         SeekableByteChannel openSeekable() throws IOException;
         Node parent();
+        default boolean symbolicLink() { return false; }
     }
 
     private LibraryFiles() {}
@@ -85,6 +86,7 @@ final class LibraryFiles {
         @Override public boolean directory() { return file.isDirectory(); }
         @Override public long size() { return file.isFile() ? file.length() : -1; }
         @Override public Node parent() { return parent; }
+        @Override public boolean symbolicLink() { return Files.isSymbolicLink(file.toPath()); }
         @Override public List<Node> children() throws IOException {
             File[] files = file.listFiles();
             if (files == null) {

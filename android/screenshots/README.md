@@ -75,3 +75,9 @@ The facts view reads declared character metadata from a self-created DEF file. T
 ![Synthetic snapshot and smart collections for one linked source](android-collections-list-synthetic.png)
 
 The private collection list shows a named snapshot and a dynamic smart collection for self-created demonstration content. The [activation review](android-collections-review-synthetic.png) shows the ordered character and stage counts and makes clear that activation changes the private working roster; the linked source requires a separate Export review. Both captures use the independently tested integrated `e80fbac` debug APK.
+
+## Reviewed add-only import and health (feature branch)
+
+![Synthetic character add-on review with exact destination and no-replacement notice](android-addon-import-review-synthetic.png)
+
+The import review names the add-on, file count, byte count, and supported reference result before any source write. A [blocked review](android-addon-import-blocked-synthetic.png) shows a missing required sprite and offers only discard. The [read-only stage health report](android-addon-stage-health-synthetic.png) shows the reference check without changing the roster. These synthetic captures use the independently tested `637ccf5` debug APK; the integrated `218a9a4` build changed only the previously tested **Filter** label.
