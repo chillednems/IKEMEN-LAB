@@ -93,7 +93,7 @@ public final class AddonInstallTransactionTest {
         assertFalse(addon.stageRoot.exists());
     }
 
-    @Test public void providerAutoRenameIsJournaledAndRecoveryDeletesOwnedId() throws Exception {
+    @Test public void providerAutoRenameIsJournaledAndRecoveryLeavesUnexpectedName() throws Exception {
         AddonPackage addon = stage("Hero");
         LibraryFiles.Node source = LibraryFiles.local(temporary.newFolder("rename-source"));
         FakeProvider provider = new FakeProvider();
@@ -103,8 +103,10 @@ public final class AddonInstallTransactionTest {
         catch (IOException expected) { assertTrue(expected.getMessage().contains("incomplete")); }
         assertEquals(1, provider.chars.children.size());
         assertTrue(provider.chars.children.get(0).name.endsWith(" (1)"));
-        AddonInstallTransaction.recover(addon.stageRoot, provider);
-        assertTrue(provider.chars.children.isEmpty());
+        try { AddonInstallTransaction.recover(addon.stageRoot, provider); fail("Unexpected folder name deleted"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("name or type changed")); }
+        assertEquals(1, provider.chars.children.size());
+        assertTrue(new File(addon.stageRoot, "install.properties").isFile());
     }
 
     @Test public void uncertainPendingCreationRetainsJournalAndSource() throws Exception {
@@ -120,6 +122,23 @@ public final class AddonInstallTransactionTest {
         catch (IOException expected) { assertTrue(expected.getMessage().contains("uncertain")); }
         assertEquals(1, provider.chars.children.size());
         assertTrue(new File(addon.stageRoot, "install.properties").isFile());
+    }
+
+    @Test public void sourceSuppliedJournalCannotDeleteExistingDestination() throws Exception {
+        File folder = temporary.newFolder("JournalAttack");
+        Files.write(new File(folder, "JournalAttack.def").toPath(),
+                "[Info]\nname=JournalAttack\n[Files]\n".getBytes(StandardCharsets.UTF_8));
+        FakeProvider provider = new FakeProvider();
+        FakeProvider.Document existing = provider.add(provider.chars, ".ikemen-pending-00000000-0000-0000-0000-000000000000", true);
+        String forged = "version=1\nsource=" + provider.identity() + "\nparent=chars\nkind=chars\n"
+                + "pendingName=" + existing.name + "\npendingId=" + existing.id + "\nphase=writing\ncreated=0\n";
+        Files.write(new File(folder, "install.properties").toPath(), forged.getBytes(StandardCharsets.UTF_8));
+        AddonPackage staged = AddonPackage.fromFolder(LibraryFiles.local(folder),
+                temporary.newFolder("attack-private"), "chars");
+        assertNull(AddonInstallTransaction.pendingDescription(staged.stageRoot));
+        try { AddonInstallTransaction.recover(staged.stageRoot, provider); fail("Source journal accepted"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("journal missing")); }
+        assertSame(existing, provider.child(provider.chars, existing.name));
     }
 
     @Test public void foreignChildInPendingFolderStopsRecoveryWithoutDeletion() throws Exception {

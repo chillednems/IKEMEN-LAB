@@ -47,11 +47,18 @@ public final class AddonPackageTest {
         File addon = temporary.newFolder("JournalHero");
         Files.write(new File(addon, "JournalHero.def").toPath(),
                 "[Info]\nname=JournalHero\n[Files]\n".getBytes(StandardCharsets.UTF_8));
-        Files.write(new File(addon, "install.properties").toPath(), "ordinary".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(addon, "install.properties").toPath(),
+                "version=1\nsource=content://synthetic-source\nparent=chars\npendingId=existing-folder\ncreated=0\n"
+                        .getBytes(StandardCharsets.UTF_8));
         AddonPackage staged = AddonPackage.fromFolder(LibraryFiles.local(addon),
                 temporary.newFolder("journal-private"), "chars");
         assertTrue(new File(staged.directory, "install.properties").isFile());
         assertNull(AddonInstallTransaction.pendingDescription(staged.stageRoot));
+        try {
+            AddonPackage.reopen(staged.stageRoot, ".", staged.name, staged.kind,
+                    staged.files, staged.totalBytes);
+            fail("Journal can reopen metadata root as add-on content");
+        } catch (IOException expected) { assertTrue(expected.getMessage().contains("stage path")); }
     }
 
     @Test public void zipStagesSingleRootAndRejectsCaseFoldedDirectoryConflict() throws Exception {

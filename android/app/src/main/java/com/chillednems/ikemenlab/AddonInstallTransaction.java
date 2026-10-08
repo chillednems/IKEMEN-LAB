@@ -81,8 +81,7 @@ final class AddonInstallTransaction {
         journal.setProperty("name", reviewed.name);
         journal.setProperty("pendingName", pendingName);
         journal.setProperty("manifest", reviewed.manifest);
-        journal.setProperty("stageDirectory", addon.directory.equals(addon.stageRoot)
-                ? "." : addon.directory.getName());
+        journal.setProperty("stageDirectory", addon.directory.getName());
         journal.setProperty("fileCount", Integer.toString(addon.files.size()));
         for (int i = 0; i < addon.files.size(); i++) {
             AddonPackage.Entry entry = addon.files.get(i);
@@ -171,6 +170,8 @@ final class AddonInstallTransaction {
         String phase = journal.getProperty("phase");
         if ("committed".equals(phase)) { AddonPackage.erase(stageRoot); return; }
         String pendingName = journal.getProperty("pendingName");
+        if (pendingName == null || !pendingName.matches("\\.ikemen-pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+            throw new IOException("Import journal has invalid pending-folder identity");
         List<Destination.Node> parentChildren = destination.children(parent);
         Destination.Node finalNode = exactChild(parentChildren, journal.getProperty("name"));
         String finalId = journal.getProperty("finalId");
@@ -196,6 +197,8 @@ final class AddonInstallTransaction {
                 throw new IOException("Provider rename outcome is uncertain; import journal retained");
             AddonPackage.erase(stageRoot); return;
         }
+        if (!pending.directory || !pending.name.equals(pendingName))
+            throw new IOException("Pending folder name or type changed; journal retained");
         Map<String, String> owned = owned(journal);
         java.util.Set<String> remaining = new java.util.HashSet<>(owned.values());
         verifyOwnedIds(destination, pending, remaining);

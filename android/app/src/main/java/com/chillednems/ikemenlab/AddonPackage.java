@@ -50,9 +50,9 @@ final class AddonPackage {
                                List<Entry> entries, long bytes) throws IOException {
         requireKind(kind);
         validSegment(name);
-        if (!relativeDirectory.equals(".") && !relativeDirectory.equals("content")
-                && !relativeDirectory.equals("addon")) throw new IOException("Import journal has invalid stage path");
-        File directory = relativeDirectory.equals(".") ? stageRoot : new File(stageRoot, relativeDirectory);
+        if (!relativeDirectory.equals("content") && !relativeDirectory.equals("addon"))
+            throw new IOException("Import journal has invalid stage path");
+        File directory = new File(stageRoot, relativeDirectory);
         if (!directory.isDirectory()) throw new IOException("Private add-on stage is missing");
         for (Entry entry : entries) validPath(entry.path, false);
         return new AddonPackage(stageRoot, directory, name, kind, entries, bytes);
