@@ -74,6 +74,26 @@ final class RosterArrangement {
 
     List<Slot> slots() { return new ArrayList<>(slots); }
 
+    List<String> slotTexts() {
+        List<String> result = new ArrayList<>(slots.size());
+        for (Slot slot : slots) result.add(lines.get(slot.line).text);
+        return result;
+    }
+
+    byte[] bytesIgnoringSlotText() {
+        boolean[] occupied = new boolean[lines.size()];
+        for (Slot slot : slots) occupied[slot.line] = true;
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++)
+            result.append(occupied[i] ? "<slot>" : lines.get(i).text).append(lines.get(i).ending);
+        byte[] bytes = result.toString().getBytes(encoding);
+        if (!bom) return bytes;
+        byte[] withBom = new byte[bytes.length + 3];
+        withBom[0] = (byte) 239; withBom[1] = (byte) 187; withBom[2] = (byte) 191;
+        System.arraycopy(bytes, 0, withBom, 3, bytes.length);
+        return withBom;
+    }
+
     byte[] moved(int position, int direction) {
         int next = position + direction;
         if (position < 0 || next < 0 || next >= slots.size() || Math.abs(direction) != 1)
