@@ -64,7 +64,7 @@ public final class LibraryScanner {
     static String readText(LibraryFiles.Node file) throws IOException {
         return readTextBytes(LibraryFiles.readLimited(file, 2 * 1024 * 1024), file.name());
     }
-    private static String readTextBytes(byte[] bytes, String name) throws IOException {
+    static String readTextBytes(byte[] bytes, String name) throws IOException {
         if (bytes.length > 2 * 1024 * 1024) throw new IOException("Metadata file is too large: " + name);
         String utf8 = decode(bytes, StandardCharsets.UTF_8);
         if (utf8 != null) return utf8.startsWith("\ufeff") ? utf8.substring(1) : utf8;

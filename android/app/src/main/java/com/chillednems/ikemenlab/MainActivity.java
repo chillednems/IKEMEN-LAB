@@ -52,6 +52,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.TreeSet;
 
 /** Landscape-friendly touch and hardware-controller library browser. */
 public final class MainActivity extends Activity {
@@ -61,6 +62,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_BACKUP_TREE = 103;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final ExecutorService PREVIEW = Executors.newSingleThreadExecutor();
+    private static final ExecutorService DETAILS = Executors.newSingleThreadExecutor();
     private static final ThreadPoolExecutor THUMBNAILS = new ThreadPoolExecutor(2, 2, 0L,
             TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(48));
     private static final String PREFS = "library";
@@ -105,6 +107,10 @@ public final class MainActivity extends Activity {
     private LibraryScanner.Item selected;
     private String restoreSelection;
     private String searchText = "";
+    private String typeFilter = "All", statusFilter = "All", tagFilter;
+    private boolean inferredTagFilter;
+    private TagStore tagStore;
+    private String tagSource;
     private boolean busy;
     private long lastStickMove;
     private volatile String previewKey;
@@ -128,6 +134,10 @@ public final class MainActivity extends Activity {
         library = managedLibrary(path);
         if (state != null) {
             searchText = state.getString("search", "");
+            typeFilter = state.getString("typeFilter", "All");
+            statusFilter = state.getString("statusFilter", "All");
+            tagFilter = state.getString("tagFilter");
+            inferredTagFilter = state.getBoolean("inferredTagFilter", false);
             restoreSelection = state.getString("selection");
             reconnectLibrary = managedLibrary(state.getString("reconnect"));
             backupPickerLibrary = managedLibrary(state.getString("backupPicker"));
@@ -157,6 +167,10 @@ public final class MainActivity extends Activity {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putString("search", search == null ? searchText : search.getText().toString());
+        state.putString("typeFilter", typeFilter);
+        state.putString("statusFilter", statusFilter);
+        state.putString("tagFilter", tagFilter);
+        state.putBoolean("inferredTagFilter", inferredTagFilter);
         if (selected != null) state.putString("selection", selectionKey(selected));
         if (reconnectLibrary != null) state.putString("reconnect", reconnectLibrary.getAbsolutePath());
         if (backupPickerLibrary != null) state.putString("backupPicker", backupPickerLibrary.getAbsolutePath());
@@ -272,6 +286,7 @@ public final class MainActivity extends Activity {
             browserViewButton = button(browserGrid() ? "View: Grid" : "View: List", this::toggleBrowserView);
             actions.addView(browserViewButton,
                     new LinearLayout.LayoutParams(0, dp(58), .75f));
+            actions.addView(button("Filter", this::showFilters), new LinearLayout.LayoutParams(0, dp(58), .7f));
             actions.addView(button("Settings", this::showSettings), new LinearLayout.LayoutParams(0, dp(58), 1));
             exportHint = label("", 13, false);
             root.addView(exportHint);
@@ -350,6 +365,78 @@ public final class MainActivity extends Activity {
         list.setHorizontalSpacing(dp(4));
         list.setVerticalSpacing(dp(4));
         list.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+    }
+
+    private TagStore tags() throws IOException {
+        if (library == null) throw new IOException("Select a source folder first");
+        String source = binding != null && binding.sourceTree != null
+                ? binding.sourceTree.toString() : library.getCanonicalPath();
+        if (!source.equals(tagSource)) {
+            tagStore = new TagStore(new File(getFilesDir(), "manual-tags"), source);
+            tagSource = source;
+        }
+        return tagStore;
+    }
+
+    private void showFilters() {
+        showActionSheet("Browser filters", new String[]{
+                "Type · " + typeFilter, "Status · " + statusFilter,
+                "Tag · " + (tagFilter == null ? "All" : (inferredTagFilter ? "Inferred: " : "Manual: ") + tagFilter),
+                "Clear filters"}, new Runnable[]{this::showTypeFilter, this::showStatusFilter,
+                this::showTagFilter, () -> {
+                    typeFilter = "All"; statusFilter = "All"; tagFilter = null; renderList();
+                }});
+    }
+
+    private void showTypeFilter() {
+        String[] choices = {"All", "Characters", "Stages"};
+        Runnable[] actions = new Runnable[choices.length];
+        for (int i = 0; i < choices.length; i++) {
+            String choice = choices[i];
+            actions[i] = () -> { typeFilter = choice; renderList(); };
+            choices[i] = choiceLabel(choice.equals(typeFilter), choice);
+        }
+        showActionSheet("Filter by type", choices, actions);
+    }
+
+    private void showStatusFilter() {
+        String[] choices = {"All", "Enabled", "Disabled", "Unlisted", "Missing"};
+        Runnable[] actions = new Runnable[choices.length];
+        for (int i = 0; i < choices.length; i++) {
+            String choice = choices[i];
+            actions[i] = () -> { statusFilter = choice; renderList(); };
+            choices[i] = choiceLabel(choice.equals(statusFilter), choice);
+        }
+        showActionSheet("Filter by status", choices, actions);
+    }
+
+    private void showTagFilter() {
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        labels.add(choiceLabel(tagFilter == null, "All tags"));
+        actions.add(() -> { tagFilter = null; renderList(); });
+        try {
+            int count = 0;
+            for (String tag : tags().allTags()) {
+                if (count++ >= 40) break;
+                labels.add(choiceLabel(tag.equalsIgnoreCase(tagFilter) && !inferredTagFilter, "Manual · " + tag));
+                actions.add(() -> { tagFilter = tag; inferredTagFilter = false; renderList(); });
+            }
+        } catch (IOException unavailable) { showStatus("Manual tags unavailable: " + unavailable.getMessage()); }
+        TreeSet<String> inferred = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        if (catalog != null) {
+            for (LibraryScanner.Item item : catalog.characters) inferred.addAll(inferredTags(item));
+            for (LibraryScanner.Item item : catalog.stages) inferred.addAll(inferredTags(item));
+        }
+        for (String tag : inferred) {
+            labels.add(choiceLabel(tag.equalsIgnoreCase(tagFilter) && inferredTagFilter, "Inferred · " + tag));
+            actions.add(() -> { tagFilter = tag; inferredTagFilter = true; renderList(); });
+        }
+        showActionSheet("Filter by tag · first 40 manual tags", labels.toArray(new String[0]), actions.toArray(new Runnable[0]));
+    }
+
+    private static List<String> inferredTags(LibraryScanner.Item item) {
+        return TagInference.from(item.reference, item.name, item.author);
     }
 
     private void showSettings() {
@@ -1023,6 +1110,9 @@ public final class MainActivity extends Activity {
         menu.getMenu().add(browserGrid() ? "Switch to list" : "Switch to grid").setOnMenuItemClickListener(item -> {
             anchor.post(this::toggleBrowserView); return true;
         });
+        menu.getMenu().add("Filters").setOnMenuItemClickListener(item -> {
+            anchor.post(this::showFilters); return true;
+        });
         menu.show();
     }
 
@@ -1543,12 +1633,34 @@ public final class MainActivity extends Activity {
         }
         String query = searchText.trim().toLowerCase(Locale.ROOT);
         List<LibraryScanner.Item> items = new ArrayList<>();
+        TagStore manual = null;
+        try { manual = tags(); }
+        catch (IOException unavailable) { showStatus("Manual tags unavailable: " + unavailable.getMessage()); }
         for (LibraryScanner.Item item : catalog.characters)
-            if (query.isEmpty() || (item.name + " " + item.author + " " + item.reference).toLowerCase(Locale.ROOT).contains(query)) items.add(item);
+            if (matchesBrowserItem(item, query, manual)) items.add(item);
         for (LibraryScanner.Item item : catalog.stages)
-            if (query.isEmpty() || (item.name + " " + item.author + " " + item.reference).toLowerCase(Locale.ROOT).contains(query)) items.add(item);
+            if (matchesBrowserItem(item, query, manual)) items.add(item);
         browserAdapter.replace(items, items.isEmpty() ? "No matching content." : null);
         renderDetail();
+    }
+
+    private boolean matchesBrowserItem(LibraryScanner.Item item, String query, TagStore manual) {
+        if (!query.isEmpty() && !(item.name + " " + item.author + " " + item.reference)
+                .toLowerCase(Locale.ROOT).contains(query)) return false;
+        boolean character = item.kind.equals("characters");
+        if (typeFilter.equals("Characters") && !character || typeFilter.equals("Stages") && character) return false;
+        if (statusFilter.equals("Enabled") && !Boolean.TRUE.equals(item.enabled)
+                || statusFilter.equals("Disabled") && !Boolean.FALSE.equals(item.enabled)
+                || statusFilter.equals("Unlisted") && item.enabled != null
+                || statusFilter.equals("Missing") && item.warning == null) return false;
+        if (tagFilter != null) {
+            List<String> tags = inferredTagFilter ? inferredTags(item)
+                    : manual == null ? java.util.Collections.emptyList() : manual.get(selectionKey(item));
+            boolean matched = false;
+            for (String tag : tags) if (tag.equalsIgnoreCase(tagFilter)) { matched = true; break; }
+            if (!matched) return false;
+        }
+        return true;
     }
 
     private final class BrowserAdapter extends BaseAdapter {
@@ -1733,11 +1845,120 @@ public final class MainActivity extends Activity {
         }
         detail.addView(label("DEF: " + selected.file, 13, false));
         detail.addView(label("Roster: " + (selected.enabled == null ? "Not listed" : selected.enabled ? "Enabled" : "Disabled"), 16, false));
+        detail.addView(label("Inferred cues: " + (inferredTags(selected).isEmpty()
+                ? "None" : String.join(", ", inferredTags(selected))), 14, false));
+        try {
+            List<String> manual = tags().get(selectionKey(selected));
+            detail.addView(label("Manual tags: " + (manual.isEmpty() ? "None" : String.join(", ", manual)), 14, false));
+        } catch (IOException unavailable) {
+            detail.addView(label("Manual tags unavailable: " + unavailable.getMessage(), 14, false));
+        }
+        detail.addView(button("DEF facts & input definitions", this::showMetadataDetails));
+        detail.addView(button("Edit manual tags", this::showManualTags));
         rosterButton = button(selected.warning != null && !Boolean.TRUE.equals(selected.enabled) ? "Cannot enable missing file"
                 : selected.enabled != null && selected.enabled ? "Disable in roster" : "Enable in roster",
                 () -> toggleSelected(selected.enabled == null || !selected.enabled));
         if (selected.warning != null && !Boolean.TRUE.equals(selected.enabled)) rosterButton.setEnabled(false);
         detail.addView(rosterButton);
+    }
+
+    private void showMetadataDetails() {
+        if (selected == null) return;
+        LibraryScanner.Item item = selected;
+        String itemKey = selectionKey(item);
+        long epoch = catalogEpoch;
+        showDecisionSheet("DEF facts & input definitions", "Reading source DEF and CMD…", "", null);
+        LinearLayout loading = activeSheet;
+        DETAILS.execute(() -> {
+            MetadataDetails result = null;
+            String error = null;
+            try { result = MetadataDetails.read(item); }
+            catch (IOException unavailable) { error = unavailable.getMessage(); }
+            MetadataDetails facts = result;
+            String issue = error;
+            runOnUiThread(() -> {
+                if (isDestroyed() || activeSheet != loading || catalogEpoch != epoch
+                        || selected == null || !itemKey.equals(selectionKey(selected))) return;
+                if (facts == null) showDecisionSheet("DEF facts unavailable", issue, "", null);
+                else showMetadataSheet(item.name, facts);
+            });
+        });
+    }
+
+    private void showMetadataSheet(String name, MetadataDetails facts) {
+        LinearLayout panel = column();
+        panel.addView(sheetTitle(name + " · source facts"), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        panel.addView(tabs, new LinearLayout.LayoutParams(-1, dp(48)));
+        ScrollView scroll = new ScrollView(this);
+        TextView content = label("", compactLayout ? 14 : 15, false);
+        content.setTextIsSelectable(true);
+        scroll.addView(content);
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        Runnable showFacts = () -> {
+            content.setText(facts.fields.isEmpty() ? "No supported DEF facts found." : String.join("\n", facts.fields));
+            scroll.scrollTo(0, 0);
+        };
+        Runnable showInputs = () -> {
+            String listing = facts.commands.isEmpty() ? facts.commandNotice
+                    : facts.commandNotice + "\n\n" + String.join("\n", facts.commands)
+                    + (facts.commands.size() == 200 ? "\n…first 200 definitions shown" : "");
+            content.setText(listing);
+            scroll.scrollTo(0, 0);
+        };
+        tabs.addView(button("DEF facts", showFacts), new LinearLayout.LayoutParams(0, -1, 1));
+        tabs.addView(button("Input definitions", showInputs), new LinearLayout.LayoutParams(0, -1, 1));
+        panel.addView(button("Close", this::dismissSheet), new LinearLayout.LayoutParams(-1, dp(48)));
+        showFacts.run();
+        presentSheet(panel, scroll);
+    }
+
+    private void showManualTags() {
+        if (selected == null) return;
+        LibraryScanner.Item item = selected;
+        try {
+            List<String> current = tags().get(selectionKey(item));
+            List<String> labels = new ArrayList<>();
+            List<Runnable> actions = new ArrayList<>();
+            labels.add("Add a manual tag");
+            actions.add(() -> showTagInput(item));
+            for (String tag : current) {
+                labels.add("Remove · " + tag);
+                actions.add(() -> changeTag(item, tag));
+            }
+            showActionSheet("Manual tags · private to this source", labels.toArray(new String[0]),
+                    actions.toArray(new Runnable[0]));
+        } catch (IOException unavailable) { showDecisionSheet("Manual tags unavailable", unavailable.getMessage(), "", null); }
+    }
+
+    private void showTagInput(LibraryScanner.Item item) {
+        LinearLayout panel = column();
+        panel.addView(sheetTitle("Add manual tag"), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = column();
+        content.addView(label("1–24 characters. Stored privately for this source; game files are unchanged.", 15, false));
+        EditText entry = new EditText(this);
+        entry.setSingleLine(true);
+        entry.setTextColor(Color.WHITE);
+        entry.setHint("Tag name");
+        content.addView(entry, new LinearLayout.LayoutParams(-1, dp(55)));
+        scroll.addView(content);
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        panel.addView(button("Save tag", () -> changeTag(item, entry.getText().toString())),
+                new LinearLayout.LayoutParams(-1, dp(48)));
+        panel.addView(button("Close", this::dismissSheet), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
+        entry.requestFocus();
+    }
+
+    private void changeTag(LibraryScanner.Item item, String tag) {
+        try {
+            tags().toggle(selectionKey(item), tag);
+            dismissSheet();
+            renderList();
+            showStatus("Manual tags saved privately for this source.");
+        } catch (IOException unavailable) { showStatus("Tag not saved: " + unavailable.getMessage()); }
     }
 
     private static final class DisplayPreview {
