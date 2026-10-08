@@ -14,4 +14,4 @@ Choose the source folder and all backup locations in **Settings**. The selected 
 
 **Roster actions → Backups and restore** lists verified versions and their origin. A version from an earlier destination can load locally or restore the source; a new preimage from that restore goes to the currently selected destination. If source access is unavailable, app-private preimages and working undo versions can still be listed and loaded locally. Source overwrite requires reconnecting the source. Normal source backup, restore, and recovery checks remain in effect. The bottom controls of Settings and export sheets account for Android navigation insets; physical Odin 3 touch targets still need user testing.
 
-Screenpack preview/roster arrangement and importing new characters or stages remain later work in [ROADMAP.md](ROADMAP.md).
+The 0.7.0 candidate adds screenpack-aware roster arrangement and reviewed add-only character or stage import. Import uses a bounded private staging area for the one selected add-on, never copies the whole library, and does not change `select.def`. See the [roadmap](ROADMAP.md) for its remaining validation limits.
