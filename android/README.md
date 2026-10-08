@@ -12,6 +12,10 @@ The [0.6.0 screenshots](screenshots/README.md#060) show the visible Export actio
 2. Search or scroll the library. Tap an item once to select it and again to enable or disable it. With physical controls, move focus using the D-pad or left stick and press **A** to select, then **A** again to toggle; **B** clears selection or goes back. Details show the artwork below the name, author, and reference. Missing entries stay visible in red with a text warning; disable them if needed, but restore their files before enabling them.
 3. Use **Export** on the main screen when you want the working roster written to the source `data/select.def`. The button stays visible in landscape, portrait, and compact layouts. If export is unavailable, the screen says why. You can also save a separate copy through **Roster actions → Save a copy elsewhere**.
 
+**Roster actions → Arrange roster · select screen** shows a bounded static preview using the active motif from `save/config.ini`, its `system.def`, and `[Select Info]` rows and columns. It reports active slot count and positions beyond the configured capacity. Character, `randomselect`, and literal `empty` lines appear in order; available character portraits appear in the first visible cells. Use **↑** and **↓** with touch or focus them with the D-pad and press **A** to move a slot in the private working roster. Each move keeps its complete entry, including options and comments. Review **Export** to apply those changes to the linked source.
+
+The preview is an approximation of the engine's select screen. It displays up to 100 occupied positions when the screenpack has 16 or fewer columns; wider layouts use the ordered slot list so positions are not reflowed. It does not reproduce screenpack art, spacing, or game behavior. If the active screenpack points to a separate `select.def`, arrangement and linked export to `data/select.def` are unavailable; the app does not rewrite `system.def`. A missing or unsupported motif gives a warning and an unknown capacity.
+
 Settings always shows the current source folder, character preview choice, orientation, backup location, retention, and no-change warning state. Source selection and reconnection are both in Settings. Choosing the same source again keeps your unexported working roster; choosing a different source starts a separate working roster without changing either source folder.
 
 ## Artwork and layout
@@ -42,7 +46,7 @@ Changing the selection does not delete or move older backups. **Roster actions �
 
 The selected library must be an unpacked folder, not a ZIP/RAR/7z archive. Browsing is bounded to 20,000 listed entries and 20 folder levels. There is no 8 GB full-folder copy limit in 0.6.0 because characters and stages stay in the selected source. Earlier 0.5.0 private copies, working roster edits, and backups are preserved on upgrade; the app does not silently delete them or fall back to stale copied content if source permission is lost. Reconnect the original folder in Settings when needed. [Storage and migration details](DIRECT-SOURCE-DEVELOPMENT.md) explain the transition.
 
-The signed APK passed emulator checks with Android's external-storage provider. Physical Odin 3 touch/controller behavior and other providers' permission and recovery edge cases remain unverified. Screenpack preview and roster arrangement, importing new game content, and game launching are future work; see the [roadmap](ROADMAP.md).
+The signed 0.6.0 APK passed emulator checks with Android's external-storage provider. Physical Odin 3 touch/controller behavior and other providers' permission and recovery edge cases remain unverified. Importing new game content and game launching are future work; see the [roadmap](ROADMAP.md).
 
 ## Build from source
 
