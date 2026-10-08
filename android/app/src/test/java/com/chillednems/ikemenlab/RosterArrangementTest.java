@@ -26,4 +26,15 @@ public final class RosterArrangementTest {
         assertEquals((byte)239, moved[0]);
         assertTrue(new String(moved, StandardCharsets.ISO_8859_1).contains("a, é"));
     }
+
+    @Test public void boundsPathologicalShortLineRosters() throws Exception {
+        StringBuilder text = new StringBuilder("[Characters]\n");
+        for (int i = 0; i < 30001; i++) text.append("a\n");
+        try {
+            new RosterArrangement(text.toString().getBytes(StandardCharsets.UTF_8));
+            fail("Expected bounded preview");
+        } catch (java.io.IOException expected) {
+            assertTrue(expected.getMessage().contains("30,000"));
+        }
+    }
 }

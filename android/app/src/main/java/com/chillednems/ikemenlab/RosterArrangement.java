@@ -13,6 +13,7 @@ import java.util.Locale;
 
 /** Ordered active slots in [Characters], retaining all unrelated select.def bytes. */
 final class RosterArrangement {
+    private static final int MAX_LINES = 30000;
     static final class Slot {
         final int line;
         final String title;
@@ -52,6 +53,7 @@ final class RosterArrangement {
             }
             if (i == content.length() && i == start) break;
             String value = content.substring(start, i);
+            if (lines.size() >= MAX_LINES) throw new IOException("Roster arrangement exceeds 30,000 line preview limit");
             lines.add(new Line(value, content.substring(i, end)));
             String next = RosterLineClassifier.sectionOf(value);
             if (next != null) section = next;

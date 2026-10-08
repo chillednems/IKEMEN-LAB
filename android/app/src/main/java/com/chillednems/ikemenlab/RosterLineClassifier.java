@@ -52,7 +52,8 @@ final class RosterLineClassifier {
         if (reference.isEmpty() || reference.indexOf('=') >= 0
                 || reference.indexOf('[') >= 0 || reference.indexOf(']') >= 0) return false;
         String lower = reference.toLowerCase(Locale.ROOT);
-        if (lower.equals("random") || lower.equals("randomselect") || lower.startsWith("randomselect/")) return false;
+        if (lower.equals("random") || lower.equals("randomselect") || lower.equals("empty")
+                || lower.startsWith("randomselect/")) return false;
         if (!active && !reference.contains("/") && !lower.endsWith(".def") && !lower.endsWith(".zip")) return false;
         // A path-shaped prose comment such as "chars/ directory. The syntax is as" is not a roster entry.
         if (!active && reference.contains("/") && reference.contains(" ")

@@ -39,4 +39,13 @@ public final class ScreenpackStatusTest {
         assertFalse(unsafe.globalRoster);
         assertFalse(unsafe.knownAlternate);
     }
+
+    @Test public void backslashDataSelectIsResolvedFromRoot() throws Exception {
+        write("save/config.ini", "[Config]\nMotif = data/pack/system.def\n");
+        write("data/pack/system.def", "[Files]\nselect = data\\select.def\n");
+        write("data/select.def", "[Characters]\nKFM\n");
+        ScreenpackStatus status = ScreenpackStatus.inspect(LibraryFiles.local(temporary.getRoot()));
+        assertTrue(status.globalRoster);
+        assertFalse(status.knownAlternate);
+    }
 }

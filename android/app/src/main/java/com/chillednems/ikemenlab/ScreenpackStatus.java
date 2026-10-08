@@ -39,7 +39,7 @@ final class ScreenpackStatus {
         int cols = dimension(DefParser.value(parsed, "select info", "columns", ""));
         String selected = DefParser.value(parsed, "files", "select", "").trim();
         if (selected.isEmpty()) selected = "select.def";
-        List<String> folder = selected.toLowerCase(Locale.ROOT).startsWith("data/")
+        List<String> folder = selected.replace('\\', '/').toLowerCase(Locale.ROOT).startsWith("data/")
                 ? new ArrayList<>() : new ArrayList<>(motifParts.subList(0, motifParts.size() - 1));
         List<String> targetParts = normalize(selected, folder);
         if (targetParts == null) return new ScreenpackStatus(motif, "Unknown", "Screenpack select path is unsafe or unsupported.", rows, cols, false);

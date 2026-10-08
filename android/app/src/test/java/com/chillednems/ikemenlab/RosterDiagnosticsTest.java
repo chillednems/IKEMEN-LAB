@@ -20,7 +20,7 @@ public final class RosterDiagnosticsTest {
         assertTrue(chars.mkdirs()); assertTrue(stages.mkdir());
         Files.write(new File(chars, "KFM.def").toPath(), new byte[0]);
         Files.write(new File(stages, "existing.def").toPath(), new byte[0]);
-        String roster = "[Characters]\r\nKFM/KFM.def\r\nKFM/alternate.def\r\nrandomselect\r\n; guide text\r\n; missing/disabled.def\r\n"
+        String roster = "[Characters]\r\nKFM/KFM.def\r\nKFM/alternate.def\r\nrandomselect\r\nempty\r\n; guide text\r\n; missing/disabled.def\r\n"
                 + "[ExtraStages]\nstages/existing.def\nstages/lost.def\n; add your stages here\n";
         List<RosterDiagnostics.Warning> warnings = RosterDiagnostics.scan(root, roster.getBytes(StandardCharsets.UTF_8));
         assertEquals(3, warnings.size());
@@ -28,6 +28,9 @@ public final class RosterDiagnosticsTest {
         assertEquals("missing/disabled.def", warnings.get(1).rawReference);
         assertFalse(warnings.get(1).active);
         assertEquals("stages/lost.def", warnings.get(2).rawReference);
+        LibraryScanner.Catalog catalog = LibraryScanner.scan(LibraryFiles.local(root), roster.getBytes(StandardCharsets.UTF_8));
+        assertEquals(3, catalog.characters.size());
+        for (LibraryScanner.Item item : catalog.characters) assertNotEquals("empty", item.reference);
     }
     @Test public void missingRowsAreVisibleAndDisableEditsOnlyTheirExactReference() throws Exception {
         File root = folder.newFolder();

@@ -475,9 +475,23 @@ public final class MainActivity extends Activity {
 
     private void showArrangement(int page) {
         if (busy || library == null) { showStatus("Choose a source folder first."); return; }
-        RosterArrangement arrangement;
-        try { arrangement = new RosterArrangement(new SelectStorage(library).readWorking().bytes); }
-        catch (IOException error) { showStatus("Roster arrangement unavailable: " + error.getMessage()); return; }
+        File current = library;
+        LibraryBinding expected = binding;
+        busy = true;
+        IO.execute(() -> {
+            try {
+                RosterArrangement arrangement = new RosterArrangement(new SelectStorage(current).readWorking().bytes);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false;
+                    renderArrangement(page, arrangement);
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Roster arrangement unavailable: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void renderArrangement(int page, RosterArrangement arrangement) {
         List<RosterArrangement.Slot> slots = arrangement.slots();
         ScreenpackStatus pack = screenpackStatus;
         LinearLayout panel = column();
@@ -754,6 +768,10 @@ public final class MainActivity extends Activity {
         busy = true;
         IO.execute(() -> {
             try {
+                ScreenpackStatus activeScreenpack = ScreenpackStatus.inspect(openSource(current));
+                if (activeScreenpack.knownAlternate)
+                    throw new IOException("Active screenpack select target changed to " + activeScreenpack.select
+                            + ". Review export again after restoring data/select.def as the target.");
                 SelectStorage.External target = requireReady(root, current, true);
                 if (!java.util.Objects.equals(keep, retention()))
                     throw new IOException("Backup retention changed; review export again");
