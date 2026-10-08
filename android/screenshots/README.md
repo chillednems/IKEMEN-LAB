@@ -51,3 +51,9 @@ Settings shows the selected source, preview mode, orientation, backup destinatio
 ![Character preview setting with a selected choice](android-v0.6.0-selected-preview.png)
 
 The preview setting marks **Neutral over portrait** as the current choice with a checkmark and text.
+
+## Screenpack-aware roster (Android feature branch)
+
+![Approximate select screen and roster arrangement with a synthetic 1-by-3 screenpack](android-screenpack-roster-portrait.png)
+
+The static preview reads the active motif's select-screen capacity and shows the five occupied roster slots, including random and empty slots, with two beyond capacity. This is an approximate slot-order view; in-game placement may differ. The capture uses a self-created demonstration library and the tested `600f115` debug APK.

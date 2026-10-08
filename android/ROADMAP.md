@@ -10,9 +10,9 @@ The [0.6.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/an
 
 Version 0.6.0 prompts on an unchanged `select.def` by default with an explicit **Export anyway** path. A setting can skip that extra prompt without skipping the normal review. It offers three preimage destinations: the default `select-backups` location in the selected IKEMEN data folder, the app's backup directory, or a user-selected writable directory. Exports and restores state the destination and retain recovery checks.
 
-## Character-select view
+## Character-select view in development
 
-A separate screen should preview the character-select screen using the current screenpack and let users arrange the roster. This first version does not edit the screenpack's grid, spacing, portraits, or positions. If a usable screenpack is missing, show a clear warning. The suggested remedy (including whether launching IKEMEN once creates a default screenpack for this installation) must be verified before it is shown in the app.
+The first implementation resolves the active motif from `save/config.ini`, reads its screenpack `system.def` and select target, and shows a bounded approximate slot grid and ordered list. It supports touch and controller reorder of the private working roster only when the screenpack points to `data/select.def`, with existing export review and recovery. It reports capacity and cutoff, and warns for missing or alternate screenpack data. It does not edit the screenpack's grid, spacing, portraits, or positions. Rendering exact engine placement remains future work.
 
 ## Later: import new game content
 

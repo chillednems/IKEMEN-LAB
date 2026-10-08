@@ -22,6 +22,8 @@ import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.GridLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
@@ -80,6 +82,7 @@ public final class MainActivity extends Activity {
     private String recoveryIssue;
     private LibraryScanner.Catalog catalog;
     private boolean sourceSelectExists;
+    private ScreenpackStatus screenpackStatus;
     private LibraryScanner.Item selected;
     private String restoreSelection;
     private String searchText = "";
@@ -464,10 +467,158 @@ public final class MainActivity extends Activity {
 
     private void showRosterActions() {
         if (busy) return;
-        showActionSheet("Roster actions", new String[]{"Refresh library", "Review export to linked source", "Backups and restore",
+        showActionSheet("Roster actions", new String[]{"Arrange roster · select screen", "Refresh library", "Review export to linked source", "Backups and restore",
                         "Save a copy elsewhere", "Recovery"},
-                new Runnable[]{this::refreshCatalog, this::reviewSourceExport, this::showBackups,
+                new Runnable[]{() -> showArrangement(0), this::refreshCatalog, this::reviewSourceExport, this::showBackups,
                         this::pickExport, this::showRecovery});
+    }
+
+    private void showArrangement(int page) {
+        if (busy || library == null) { showStatus("Choose a source folder first."); return; }
+        File current = library;
+        LibraryBinding expected = binding;
+        busy = true;
+        IO.execute(() -> {
+            try {
+                RosterArrangement arrangement = new RosterArrangement(new SelectStorage(current).readWorking().bytes);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false;
+                    renderArrangement(page, arrangement);
+                } });
+            } catch (IOException error) { runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                busy = false; showStatus("Roster arrangement unavailable: " + error.getMessage());
+            } }); }
+        });
+    }
+
+    private void renderArrangement(int page, RosterArrangement arrangement) {
+        List<RosterArrangement.Slot> slots = arrangement.slots();
+        ScreenpackStatus pack = screenpackStatus;
+        LinearLayout panel = column();
+        panel.addView(sheetTitle("Select screen · approximate slot order"), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = column();
+        scroll.addView(content);
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        content.addView(label(pack == null ? "Screenpack information unavailable. Refresh the library."
+                : "Motif: " + pack.motif + "\nSelect: " + pack.select
+                + "\nCapacity: " + (pack.capacity() == 0 ? "unknown" : pack.rows + " × " + pack.columns + " = " + pack.capacity())
+                + " · Active slots: " + slots.size()
+                + (pack.capacity() > 0 && slots.size() > pack.capacity() ? " · " + (slots.size() - pack.capacity()) + " beyond capacity" : "")
+                + "\nStatic order preview only; actual game placement may differ."
+                + (pack.warning == null ? "" : "\nWarning: " + pack.warning), 15, false));
+        boolean editable = pack != null && pack.globalRoster;
+        int pageSize = 100;
+        int pageCount = Math.max(1, (slots.size() + pageSize - 1) / pageSize);
+        int currentPage = Math.max(0, Math.min(page, pageCount - 1));
+        int start = currentPage * pageSize;
+        int end = Math.min(slots.size(), start + pageSize);
+        content.addView(label("Slots " + (slots.isEmpty() ? 0 : start + 1) + "–" + end + " of " + slots.size()
+                + " · page " + (currentPage + 1) + "/" + pageCount, 14, true));
+        if (pack != null && pack.capacity() > 0 && pack.columns > 16 && currentPage == 0)
+            content.addView(label("Grid preview unavailable for more than 16 columns; the ordered slot list remains available.", 14, false));
+        if (pack != null && pack.capacity() > 0 && pack.columns <= 16 && currentPage == 0) {
+            int previewColumns = pack.columns;
+            int previewCount = Math.min(Math.min(pack.capacity(), slots.size()), 100);
+            content.addView(label("Grid preview · first " + previewCount + " occupied positions", 14, true));
+            GridLayout grid = new GridLayout(this);
+            grid.setColumnCount(previewColumns);
+            for (int i = 0; i < previewCount; i++) {
+                RosterArrangement.Slot slot = slots.get(i);
+                LinearLayout cell = column();
+                cell.setBackgroundColor(0xff243440);
+                ImageView portrait = new ImageView(this);
+                portrait.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                cell.addView(portrait, new LinearLayout.LayoutParams(dp(64), dp(48)));
+                TextView caption = label((i + 1) + " " + slot.title, 10, false);
+                caption.setSingleLine(true);
+                caption.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                cell.addView(caption, new LinearLayout.LayoutParams(dp(64), dp(30)));
+                GridLayout.LayoutParams cellParams = new GridLayout.LayoutParams();
+                cellParams.width = dp(66); cellParams.height = dp(82);
+                cellParams.setMargins(dp(1), dp(1), dp(1), dp(1));
+                grid.addView(cell, cellParams);
+                if (i < 16) loadSlotPortrait(slot, portrait);
+            }
+            HorizontalScrollView horizontal = new HorizontalScrollView(this);
+            horizontal.addView(grid);
+            content.addView(horizontal);
+        }
+        for (int index = start; index < end; index++) {
+            final int slotIndex = index;
+            RosterArrangement.Slot slot = slots.get(index);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            int labelColor = pack != null && pack.capacity() > 0 && index >= pack.capacity() ? 0xffffb86b : Color.WHITE;
+            TextView title = label((index + 1) + ". " + slot.title, 15, false);
+            title.setTextColor(labelColor);
+            row.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+            if (editable) {
+                Button up = button("↑", () -> moveSlot(slotIndex, -1, slotIndex / pageSize));
+                Button down = button("↓", () -> moveSlot(slotIndex, 1, slotIndex / pageSize));
+                up.setEnabled(index > 0); down.setEnabled(index + 1 < slots.size());
+                up.setContentDescription("Move slot " + (index + 1) + " up");
+                down.setContentDescription("Move slot " + (index + 1) + " down");
+                row.addView(up, new LinearLayout.LayoutParams(dp(56), dp(48)));
+                row.addView(down, new LinearLayout.LayoutParams(dp(56), dp(48)));
+            }
+            content.addView(row);
+        }
+        LinearLayout pages = new LinearLayout(this);
+        pages.setOrientation(LinearLayout.HORIZONTAL);
+        Button previous = button("Previous", () -> showArrangement(currentPage - 1));
+        Button next = button("Next", () -> showArrangement(currentPage + 1));
+        previous.setEnabled(currentPage > 0); next.setEnabled(currentPage + 1 < pageCount);
+        pages.addView(previous, new LinearLayout.LayoutParams(0, dp(48), 1));
+        pages.addView(next, new LinearLayout.LayoutParams(0, dp(48), 1));
+        panel.addView(pages);
+        panel.addView(button("Close", this::dismissSheet), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
+    }
+
+    private void loadSlotPortrait(RosterArrangement.Slot slot, ImageView image) {
+        if (catalog == null || binding == null) return;
+        LibraryScanner.Item match = null;
+        for (LibraryScanner.Item item : catalog.characters) {
+            if (item.warning == null && item.defNode != null
+                    && (item.reference.equalsIgnoreCase(slot.title)
+                    || item.reference.split("/", 2)[0].equalsIgnoreCase(slot.title))) { match = item; break; }
+        }
+        if (match == null) return;
+        LibraryScanner.Item portraitItem = match;
+        File current = library;
+        LibraryBinding expected = binding;
+        PREVIEW.execute(() -> {
+            try {
+                PreviewFrame frame = CharacterPreview.render(portraitItem.defNode, CharacterPreview.Mode.PORTRAIT, 48, 48);
+                Bitmap bitmap = Bitmap.createBitmap(frame.argb, frame.width, frame.height, Bitmap.Config.ARGB_8888);
+                runOnUiThread(() -> { if (sameBinding(current, expected) && image.isAttachedToWindow()) image.setImageBitmap(bitmap); });
+            } catch (IOException ignored) { }
+        });
+    }
+
+    private void moveSlot(int position, int direction, int page) {
+        if (busy || library == null) return;
+        File current = library;
+        LibraryBinding source = binding;
+        busy = true;
+        IO.execute(() -> {
+            try {
+                requireReady(current, source, false);
+                if (!ScreenpackStatus.inspect(openSource(source)).globalRoster)
+                    throw new IOException("Active screenpack does not use data/select.def");
+                RosterArrangement.moveWorking(current, position, direction, retention());
+                LibraryScanner.Catalog scanned = scanWorking(current, source);
+                runOnUiThread(() -> { if (sameBinding(current, source)) {
+                    catalog = scanned; catalogEpoch++; busy = false;
+                    if (selected != null) selected = find(scanned, selected);
+                    renderList(); showArrangement(page);
+                    showStatus("Working roster reordered. Review Export to apply it to the linked folder.");
+                } });
+            } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, source)) {
+                busy = false; showStatus("Roster move stopped: " + error.getMessage());
+            } }); }
+        });
     }
 
     private void showActionSheet(String title, String[] labels, Runnable[] actions) {
@@ -561,7 +712,9 @@ public final class MainActivity extends Activity {
 
     private static String changeCounts(RosterChangeSummary changes) {
         return "Enabled " + changes.enabled + " · Disabled " + changes.disabled
-                + "\nAdded " + changes.added + " · Removed " + changes.removed;
+                + "\nAdded " + changes.added + " · Removed " + changes.removed
+                + (changes.reorderedPositions > 0 ? "\nRoster order changed: " + changes.reorderedPositions + " positions" : "")
+                + (changes.otherContentChanged ? "\nOther select.def content changed" : "");
     }
 
     private void reviewSourceExport() {
@@ -572,6 +725,10 @@ public final class MainActivity extends Activity {
         showStatus("Checking exact source destination…");
         IO.execute(() -> {
             try {
+                ScreenpackStatus activeScreenpack = ScreenpackStatus.inspect(openSource(current));
+                if (activeScreenpack.knownAlternate)
+                    throw new IOException("Active screenpack select target is " + activeScreenpack.select
+                            + ". Linked export to data/select.def is disabled until the screenpack uses that file.");
                 SelectStorage.External target = requireReady(root, current, true);
                 SelectStorage storage = new SelectStorage(root, openSource(current));
                 SelectStorage.Snapshot working = storage.readWorking();
@@ -613,6 +770,10 @@ public final class MainActivity extends Activity {
         busy = true;
         IO.execute(() -> {
             try {
+                ScreenpackStatus activeScreenpack = ScreenpackStatus.inspect(openSource(current));
+                if (activeScreenpack.knownAlternate)
+                    throw new IOException("Active screenpack select target changed to " + activeScreenpack.select
+                            + ". Review export again after restoring data/select.def as the target.");
                 SelectStorage.External target = requireReady(root, current, true);
                 if (!java.util.Objects.equals(keep, retention()))
                     throw new IOException("Backup retention changed; review export again");
@@ -830,11 +991,13 @@ public final class MainActivity extends Activity {
             catch (IOException ignored) { }
         }
         boolean ready = library != null && binding != null && binding.sourceTree != null
-                && sourceSelectExists && writable && RosterStore.selectFile(library).isFile();
+                && sourceSelectExists && writable && RosterStore.selectFile(library).isFile()
+                && (screenpackStatus == null || !screenpackStatus.knownAlternate);
         exportButton.setEnabled(ready);
         String reason = library == null ? "Choose a source folder in Settings"
                 : binding == null || binding.sourceTree == null ? "Reconnect source folder in Settings"
                 : !sourceSelectExists ? "Linked source has no data/select.def to overwrite"
+                : screenpackStatus != null && screenpackStatus.knownAlternate ? "Active screenpack select target is " + screenpackStatus.select
                 : !writable ? "Reconnect source with write access in Settings"
                 : "Create a working roster before exporting";
         exportButton.setContentDescription(ready ? "Export select.def to the linked source folder"
@@ -1010,6 +1173,7 @@ public final class MainActivity extends Activity {
         library = active;
         catalog = null;
         sourceSelectExists = false;
+        screenpackStatus = null;
         selected = null;
         restoreSelection = null;
         previewKey = null;
@@ -1171,6 +1335,7 @@ public final class MainActivity extends Activity {
                     byte[] roster = sourceSelect == null ? new byte[0]
                             : LibraryFiles.readLimited(sourceSelect, SelectStorage.MAX_BYTES);
                     LibraryScanner.Catalog scanned = LibraryScanner.scan(source, roster);
+                    ScreenpackStatus screenpack = ScreenpackStatus.inspect(source);
                     File workspace = new File(new File(getFilesDir(), "libraries"), UUID.randomUUID().toString());
                     File workData = new File(workspace, "data");
                     if (!workData.mkdirs()) throw new IOException("Could not create working roster directory");
@@ -1183,6 +1348,7 @@ public final class MainActivity extends Activity {
                     runOnUiThread(() -> { if (isDestroyed()) return;
                         library = workspace; binding = linked; catalog = scanned; catalogEpoch++; selected = null; busy = false;
                         sourceSelectExists = sourceSelect != null;
+                        screenpackStatus = screenpack;
                         syncActiveLibrary(workspace.getAbsolutePath()); renderList();
                         updateExportAvailability();
                         showStatus((flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
@@ -1230,12 +1396,14 @@ public final class MainActivity extends Activity {
                 LibraryFiles.Node source = new SafLibraryFiles(getContentResolver(), uri).root();
                 LibraryScanner.Catalog scanned = LibraryScanner.scan(source,
                         new SelectStorage(expected).readWorking().bytes);
+                ScreenpackStatus screenpack = ScreenpackStatus.inspect(source);
                 LibraryFiles.Node sourceData = LibraryFiles.child(source, "data");
                 boolean hasSourceSelect = sourceData != null && LibraryFiles.child(sourceData, "select.def") != null;
                 LibraryBinding restored = LibraryBinding.bindSource(this, expected, uri, flags, source.name());
                 runOnUiThread(() -> { if (!isDestroyed() && expected.equals(library)) {
                     binding = restored; catalog = scanned; catalogEpoch++; selected = selected == null ? null : find(scanned, selected);
                     sourceSelectExists = hasSourceSelect;
+                    screenpackStatus = screenpack;
                     busy = false; renderList(); updateExportAvailability(); showStatus("Source folder reconnected directly.");
                     checkRecoveryAtStartup(expected, restored);
                 } });
@@ -1283,9 +1451,11 @@ public final class MainActivity extends Activity {
                 LibraryFiles.Node sourceData = LibraryFiles.child(source, "data");
                 boolean hasSourceSelect = sourceData != null && LibraryFiles.child(sourceData, "select.def") != null;
                 LibraryScanner.Catalog scanned = LibraryScanner.scan(source, new SelectStorage(current).readWorking().bytes);
+                ScreenpackStatus screenpack = ScreenpackStatus.inspect(source);
                 runOnUiThread(() -> { if (sameBinding(current, currentBinding)) {
                     catalog = scanned; catalogEpoch++;
                     sourceSelectExists = hasSourceSelect;
+                    screenpackStatus = screenpack;
                     previewKey = null; previewBitmap = null; previewReason = null;
                     if (restoreSelection != null) {
                         selected = findByKey(scanned, restoreSelection);
@@ -1294,7 +1464,7 @@ public final class MainActivity extends Activity {
                     renderList(); updateExportAvailability(); showStatus(summary());
                 } });
             } catch (Exception error) { runOnUiThread(() -> { if (sameBinding(current, currentBinding)) {
-                catalog = null; selected = null; sourceSelectExists = false; renderList(); updateExportAvailability();
+                catalog = null; selected = null; sourceSelectExists = false; screenpackStatus = null; renderList(); updateExportAvailability();
                 showStatus("Source scan unavailable: " + error.getMessage());
             } }); }
         });
