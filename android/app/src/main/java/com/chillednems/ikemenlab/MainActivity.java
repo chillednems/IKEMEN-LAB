@@ -53,6 +53,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Landscape-friendly touch and hardware-controller library browser. */
 public final class MainActivity extends Activity {
@@ -116,6 +117,9 @@ public final class MainActivity extends Activity {
     private String importKind;
     private File importLibrary;
     private LibraryBinding importBinding;
+    private SharedImportPolicy.Request pendingShare;
+    private boolean shareHandled;
+    private AtomicBoolean sharedCancel;
     private boolean busy;
     private long lastStickMove;
     private volatile String previewKey;
@@ -138,6 +142,10 @@ public final class MainActivity extends Activity {
         String path = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_PATH, null);
         library = managedLibrary(path);
         if (state != null) {
+            shareHandled = state.getBoolean("shareHandled", false);
+            String sharedValue = state.getString("pendingShareValue");
+            if (sharedValue != null)
+                pendingShare = new SharedImportPolicy.Request(state.getBoolean("pendingShareLink"), sharedValue);
             searchText = state.getString("search", "");
             typeFilter = state.getString("typeFilter", "All");
             statusFilter = state.getString("statusFilter", "All");
@@ -167,9 +175,18 @@ public final class MainActivity extends Activity {
         buildScreen();
         getSharedPreferences(PREFS, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(libraryChanged);
         syncActiveLibrary(getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_PATH, null));
+        if (pendingShare != null) screenFrame.post(this::showIncomingShare);
+        else if (!shareHandled) screenFrame.post(() -> receiveShare(getIntent()));
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        receiveShare(intent);
     }
 
     @Override protected void onDestroy() {
+        if (sharedCancel != null) sharedCancel.set(true);
         if (Build.VERSION.SDK_INT >= 33 && backCallback != null)
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
         getSharedPreferences(PREFS, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(libraryChanged);
@@ -177,6 +194,11 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        state.putBoolean("shareHandled", shareHandled);
+        if (pendingShare != null) {
+            state.putBoolean("pendingShareLink", pendingShare.link);
+            state.putString("pendingShareValue", pendingShare.value);
+        }
         state.putString("search", search == null ? searchText : search.getText().toString());
         state.putString("typeFilter", typeFilter);
         state.putString("statusFilter", statusFilter);
@@ -642,13 +664,156 @@ public final class MainActivity extends Activity {
 
     private void showRosterActions() {
         if (busy) return;
-        showActionSheet("Roster actions", new String[]{"Arrange roster · select screen", "Collections · working roster", "Import one add-on · add only", "Library health · selected item", "Refresh library", "Review export to linked source", "Backups and restore",
+        showActionSheet("Roster actions", new String[]{"Arrange roster · select screen", "Collections · working roster", "Import one add-on · add only", "Library health · selected item", "Open IKEMEN GO · launch only", "Refresh library", "Review export to linked source", "Backups and restore",
                         "Save a copy elsewhere", "Recovery"},
-                new Runnable[]{() -> showArrangement(0), this::showCollections, this::showImportActions, this::showLibraryHealth, this::refreshCatalog, this::reviewSourceExport, this::showBackups,
+                new Runnable[]{() -> showArrangement(0), this::showCollections, this::showImportActions, this::showLibraryHealth, this::confirmEngineLaunch, this::refreshCatalog, this::reviewSourceExport, this::showBackups,
                         this::pickExport, this::showRecovery});
     }
 
+    private void confirmEngineLaunch() {
+        showDecisionSheet("Open IKEMEN GO", "This opens the installed IKEMEN GO app only. "
+                        + "IKEMEN Lab cannot pass it a game folder or collection. The official v1 app may refresh assets and overwrite select.def, "
+                        + "so keep a verified backup before switching apps.", "Open app", () -> {
+                    final String packageName = "org.ikemen_engine.ikemen_go";
+                    Intent available = getPackageManager().getLaunchIntentForPackage(packageName);
+                    if (available == null || available.getComponent() == null
+                            || !packageName.equals(available.getComponent().getPackageName())) {
+                        showStatus("IKEMEN GO is not installed or has no launcher activity."); return;
+                    }
+                    Intent launch = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                            .setComponent(available.getComponent());
+                    try { startActivity(launch); }
+                    catch (android.content.ActivityNotFoundException unavailableActivity) {
+                        showStatus("IKEMEN GO launcher is unavailable.");
+                    }
+                });
+    }
+
     private File importRoot() { return new File(getFilesDir(), "addon-imports"); }
+
+    @SuppressWarnings("deprecation")
+    private void receiveShare(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return;
+        shareHandled = true;
+        if (busy || activeSheet != null || pendingShare != null) {
+            Toast.makeText(this, "Finish or cancel the current review, then share again.",
+                    Toast.LENGTH_LONG).show(); return;
+        }
+        try {
+            Uri stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+            pendingShare = SharedImportPolicy.accept(intent.getAction(), intent.getType(),
+                    stream == null ? null : stream.toString(), text == null ? null : text.toString(),
+                    (intent.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0);
+            showIncomingShare();
+        } catch (IOException | RuntimeException invalid) {
+            showStatus("Shared import unavailable: " + invalid.getMessage());
+        }
+    }
+
+    private void showIncomingShare() {
+        SharedImportPolicy.Request request = pendingShare;
+        if (request == null || isDestroyed()) return;
+        if (busy || !pendingImports().isEmpty()) {
+            pendingShare = null;
+            showStatus("Resolve the current import or recovery first, then share again."); return;
+        }
+        String origin = request.link ? "HTTPS host: " + Uri.parse(request.value).getHost()
+                : "Content provider: " + Uri.parse(request.value).getAuthority();
+        boolean directDownload = request.link && SharedZipSource.trustedDownloadHost(
+                java.net.URI.create(request.value));
+        LinearLayout panel = column();
+        panel.addView(sheetTitle("Review shared add-on"),
+                new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(label(origin + "\n" + (directDownload
+                        ? "Download one ZIP from an allowed GitHub release host after confirmation. Redirects stay on the allowed hosts."
+                        : request.link ? "This host is opened in your browser only. Download its ZIP there, then share the file back to IKEMEN Lab."
+                        : "Read one shared ZIP using its temporary grant after confirmation.")
+                        + "\nOnly a private stage is prepared; source files remain unchanged until the later Install review.",
+                compactLayout ? 14 : 15, false));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        if (request.link && !directDownload) {
+            panel.addView(button("Open HTTPS link in browser", () -> {
+                pendingShare = null; dismissSheet();
+                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(request.value))
+                        .addCategory(Intent.CATEGORY_BROWSABLE)); }
+                catch (android.content.ActivityNotFoundException unavailable) {
+                    showStatus("No browser can open this HTTPS link.");
+                }
+            }), new LinearLayout.LayoutParams(-1, dp(48)));
+        } else {
+            panel.addView(button(request.link ? "Download & review character" : "Stage & review character",
+                    () -> { pendingShare = null; dismissSheet(); beginSharedStage(request, "chars"); }),
+                    new LinearLayout.LayoutParams(-1, dp(48)));
+            panel.addView(button(request.link ? "Download & review stage" : "Stage & review stage",
+                    () -> { pendingShare = null; dismissSheet(); beginSharedStage(request, "stages"); }),
+                    new LinearLayout.LayoutParams(-1, dp(48)));
+        }
+        panel.addView(button("Cancel share", () -> { pendingShare = null; dismissSheet();
+            showStatus("Shared import canceled; source unchanged."); }),
+                new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
+    }
+
+    private void showSharedTransfer(AtomicBoolean cancellation) {
+        LinearLayout panel = column();
+        panel.addView(sheetTitle("Staging shared ZIP"),
+                new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(label("Reading one bounded ZIP into private staging. No source files are being changed.",
+                compactLayout ? 14 : 15, false));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        panel.addView(button("Cancel transfer", () -> { cancellation.set(true); dismissSheet();
+            showStatus("Canceling shared ZIP transfer…"); }), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
+    }
+
+    private void beginSharedStage(SharedImportPolicy.Request request, String kind) {
+        if (busy || library == null || binding == null || binding.sourceTree == null
+                || !pendingImports().isEmpty()) {
+            showStatus("Reconnect the source or resolve import recovery, then share again."); return;
+        }
+        discardUnreviewedImports();
+        File current = library;
+        LibraryBinding expected = binding;
+        AtomicBoolean cancellation = new AtomicBoolean();
+        sharedCancel = cancellation;
+        busy = true;
+        showSharedTransfer(cancellation);
+        IO.execute(() -> {
+            AddonPackage addon = null;
+            try {
+                expected.requireCurrent(this);
+                String origin;
+                if (request.link) {
+                    SharedZipSource.Staged staged = SharedZipSource.stage(request.value, importRoot(), kind,
+                            cancellation::get, SharedZipSource.network(), AddonPackage.MAX_ARCHIVE);
+                    addon = staged.addon;
+                    origin = "Downloaded from HTTPS host " + staged.host
+                            + " · redirects: " + staged.redirects;
+                } else {
+                    Uri uri = Uri.parse(request.value);
+                    InputStream input = getContentResolver().openInputStream(uri);
+                    if (input == null) throw new IOException("Shared ZIP document cannot be read");
+                    addon = AddonPackage.fromZip(new SharedZipSource.Limited(input,
+                            AddonPackage.MAX_ARCHIVE, cancellation::get), importRoot(), kind);
+                    origin = "Shared content provider " + uri.getAuthority();
+                }
+                if (cancellation.get()) throw new IOException("Shared ZIP transfer canceled");
+                reviewStagedAddon(addon, current, expected, origin);
+            } catch (Exception error) {
+                if (addon != null) AddonPackage.erase(addon.stageRoot);
+                runOnUiThread(() -> { if (sameBinding(current, expected)) {
+                    busy = false; sharedCancel = null; dismissSheet();
+                    showStatus("Shared import stopped: " + error.getMessage());
+                } else if (!isDestroyed()) {
+                    busy = false; sharedCancel = null; dismissSheet();
+                    showStatus("Source changed; shared import canceled.");
+                } });
+            }
+        });
+    }
 
     private List<File> pendingImports() {
         List<File> pending = new ArrayList<>();
@@ -745,20 +910,7 @@ public final class MainActivity extends Activity {
                     addon = AddonPackage.fromZip(stream, importRoot(), kind);
                 } else addon = AddonPackage.fromFolder(
                         new SafLibraryFiles(getContentResolver(), uri).root(), importRoot(), kind);
-                LibraryFiles.Node source = openSource(expected);
-                AddonHealth.Report health = AddonHealth.inspectStage(addon, source);
-                SafAddonDestination destination = new SafAddonDestination(getContentResolver(), expected.sourceTree);
-                AddonInstallTransaction.Review reviewed = AddonInstallTransaction.review(addon, destination, source);
-                AddonPackage staged = addon;
-                runOnUiThread(() -> { if (sameBinding(current, expected)) {
-                    busy = false;
-                    String detail = "Destination: " + reviewed.kind + "/" + reviewed.name
-                            + "\nFiles: " + reviewed.files + " · bytes: " + reviewed.bytes
-                            + "\nSource: " + sourceFolderLabel()
-                            + "\nNo existing file is replaced. select.def is not edited."
-                            + "\n" + health.summary();
-                    showAddonReview(current, expected, staged, reviewed, detail, health);
-                } else AddonPackage.erase(staged.stageRoot); });
+                reviewStagedAddon(addon, current, expected, "Picked document");
             } catch (Exception error) {
                 if (addon != null) AddonPackage.erase(addon.stageRoot);
                 runOnUiThread(() -> { if (sameBinding(current, expected)) {
@@ -770,6 +922,34 @@ public final class MainActivity extends Activity {
                 } catch (SecurityException ignored) { }
             }
         });
+    }
+
+    private void reviewStagedAddon(AddonPackage addon, File current, LibraryBinding expected,
+                                   String origin) throws IOException {
+        expected.requireCurrent(this);
+        LibraryFiles.Node source = openSource(expected);
+        AddonHealth.Report health = AddonHealth.inspectStage(addon, source);
+        SafAddonDestination destination = new SafAddonDestination(getContentResolver(), expected.sourceTree);
+        AddonInstallTransaction.Review reviewed = AddonInstallTransaction.review(addon, destination, source);
+        runOnUiThread(() -> { if (sameBinding(current, expected)) {
+            if (sharedCancel != null && sharedCancel.get()) {
+                AddonPackage.erase(addon.stageRoot); sharedCancel = null; busy = false;
+                dismissSheet(); showStatus("Shared import canceled; source unchanged."); return;
+            }
+            busy = false; sharedCancel = null;
+            String detail = "Destination: " + reviewed.kind + "/" + reviewed.name
+                    + "\nFiles: " + reviewed.files + " · bytes: " + reviewed.bytes
+                    + "\nInput: " + origin + "\nSource: " + sourceFolderLabel()
+                    + "\nNo existing file is replaced. select.def is not edited."
+                    + "\n" + health.summary();
+            showAddonReview(current, expected, addon, reviewed, detail, health);
+        } else {
+            AddonPackage.erase(addon.stageRoot);
+            if (!isDestroyed()) {
+                busy = false; sharedCancel = null; dismissSheet();
+                showStatus("Source changed; staged import discarded.");
+            }
+        } });
     }
 
     private void showAddonReview(File current, LibraryBinding expected, AddonPackage addon,
@@ -2782,6 +2962,10 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
+        if (sharedCancel != null) {
+            sharedCancel.set(true); dismissSheet(); showStatus("Canceling shared ZIP transfer…"); return;
+        }
+        if (pendingShare != null && activeSheet != null) pendingShare = null;
         if (activeSheet != null) { dismissSheet(); return; }
         if (selected != null) { selected = null; renderList(); return; }
         finish();
