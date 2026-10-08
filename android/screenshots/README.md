@@ -87,3 +87,9 @@ The import review names the add-on, file count, byte count, and supported refere
 ![Synthetic ZIP shared through Android Files entering the reviewed add-only importer](android-shared-zip-review-synthetic.png)
 
 Android Files granted access to one synthetic ZIP, which entered the ordinary add-only review before installation. The [engine launch warning](android-engine-launch-warning-synthetic.png) explains that IKEMEN Lab passes no game folder or collection and the official v1 app may overwrite `select.def`. Both captures use the independently tested `8ddee27` debug APK; the integrated `7615a77` build changed only the previously tested **Filter** label.
+
+## Experimental PNG static stage (feature branch)
+
+![Synthetic wide PNG shown as a centered 1280-by-720 static-stage crop](android-png-stage-crop-preview-synthetic.png)
+
+The pre-review preview names the crop and its experimental static-scene limit. The separate [add-only import review](android-png-stage-import-review-synthetic.png) names the destination, files, bytes, and supported reference check. The [installed stage](android-png-stage-installed-synthetic.png) appears as Unlisted with a thumbnail and static scene preview. The first two captures use the independently tested `80fbd0f` debug APK; the installed view uses the integrated `2b27334` debug APK. All artwork is synthetic, and in-game appearance remains unverified.
