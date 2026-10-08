@@ -1,25 +1,24 @@
 # Android roadmap after 0.6.0
 
-This page separates the 0.6.0 prerelease baseline from work still planned. Android changes use separate, scoped PRs into `codex/android-library`. The `main` branch receives Android only at a later approved rollout.
+The [published 0.6.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0) is the baseline. The features below are in scoped Android development branches and are not in that APK. They target `codex/android-library`; `main` receives Android only in a later approved rollout. A new signed prerelease needs its own validation.
 
-## Delivered in 0.6.0: direct library access
+## Published 0.6.0 baseline
 
-The [0.6.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0) keeps the selected library's `chars/` and `stages/` in place using Android's persisted folder permission. It does not duplicate whole character or stage collections in app-private storage. Small app settings, roster working state, and backups placed in the app's own directory by user choice may still be stored there. Earlier private copies remain after upgrade. See [storage details](DIRECT-SOURCE-DEVELOPMENT.md).
+The selected library's `chars/` and `stages/` stay in place through Android's persisted folder permission. The app does not duplicate whole character or stage collections in app-private storage. It keeps small settings and a private working roster; backups may be placed in the app's directory by user choice. Earlier private copies remain after upgrade. See [storage details](DIRECT-SOURCE-DEVELOPMENT.md).
 
-## Delivered in 0.6.0: export and backup choices
+Export reviews the working `select.def` against the linked source, warns by default when unchanged, and offers an explicit **Export anyway** path. The preimage backup can go to the source `select-backups` folder, the app's backup directory, or a user-selected writable folder. Export and restore retain source and backup recovery checks.
 
-Version 0.6.0 prompts on an unchanged `select.def` by default with an explicit **Export anyway** path. A setting can skip that extra prompt without skipping the normal review. It offers three preimage destinations: the default `select-backups` location in the selected IKEMEN data folder, the app's backup directory, or a user-selected writable directory. Exports and restores state the destination and retain recovery checks.
+## Unreleased development sequence
 
-## Character-select view in development
+1. **Screenpack-aware roster:** Resolve `save/config.ini` motif, `system.def`, and the active select target. Show a bounded approximate slot grid, capacity, overflow, and an ordered list. Touch and controller reorder affect only the private working roster when the active target is verified as `data/select.def`. Screenpack art, spacing, and actual engine placement are not edited or reproduced.
+2. **Browser and details:** Recycled list/grid thumbnails, expanded bounded DEF and CMD input-definition views, source-specific manual tags, conservative inferred cues, and type/status/tag filtering. CMD labels are static definitions, not verified playable moves.
+3. **Collections:** Source-specific named snapshots and smart rules over supported metadata. Preview and activation are explicit; activation changes the private working roster, while linked source changes still require Export.
+4. **Add-only content:** Stage one character or stage ZIP/folder privately, validate a root DEF and supported references, then review the exact destination before adding files. Existing names are never replaced and `select.def` is never changed by import. Recovery acts only on verified journal-owned pending writes. A read-only health action checks supported references. RAR archives and bulk packs are outside this workflow.
+5. **Engine and sharing:** Open the official `org.ikemen_engine.ikemen_go` launcher only after a warning; no source folder or collection is passed. The official v1 asset refresh may overwrite `select.def`. A user-shared ZIP or confirmed HTTPS link from exact GitHub release hosts enters the same importer; other HTTPS links open in the browser for user download and sharing back. No automatic network download or install occurs.
+6. **Experimental PNG stage:** A bounded PNG becomes one static 1280×720 2D backdrop and select thumbnail, with its center crop shown before the normal add-only import review. It does not auto-register a stage in `select.def` or promise gameplay fidelity.
 
-The first implementation resolves the active motif from `save/config.ini`, reads its screenpack `system.def` and select target, and shows a bounded approximate slot grid and ordered list. It supports touch and controller reorder of the private working roster only when the screenpack points to `data/select.def`, with existing export review and recovery. It reports capacity and cutoff, and warns for missing or alternate screenpack data. It does not edit the screenpack's grid, spacing, portraits, or positions. Rendering exact engine placement remains future work.
+## Remaining validation and limits
 
-## Later: import new game content
+The select-screen view is a static approximation, not an engine renderer. Image, SFF, DEF, and document-provider support is bounded; unsupported content is reported rather than silently rewritten. The add-only importer's real-provider interrupted-write recovery was not exercised in the representative emulator QA; fake-provider tests cover the journal logic. Shared-link address checks are a best-effort preflight and do not pin DNS for the platform TLS connection. A synthetic PNG stage passed emulator SAF install, preview, health, cancel, and collision checks; engine gameplay appearance and playability remain unverified.
 
-After the current library manager has been tested on the Odin 3, a later version may import new characters and stages into the selected IKEMEN folder. That workflow should stage only the new content temporarily, validate it, and ask before adding it to the game folder. This is deferred and is not part of the direct-access change.
-
-For visible features, add public-safe screenshots to the Android branch and the corresponding prerelease. Changes with no meaningful visual effect do not need new screenshots. Never publish assets from a user's private game archive.
-
-## Physical-device controls follow-up
-
-Version 0.6.0 pads action sheets for Android navigation insets; emulator touch targets passed QA. Verify portrait touch targets and physical controls on the Odin 3 before closing the device-specific check.
+Emulator checks do not replace physical Odin 3 testing of portrait touch targets, controller focus, source grants, and install/upgrade. Public-safe screenshots belong with visible Android branch features and a later prerelease; do not publish assets from a private game archive.

@@ -63,6 +63,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_BACKUP_TREE = 103;
     private static final int PICK_ADDON_ZIP = 104;
     private static final int PICK_ADDON_FOLDER = 105;
+    private static final int PICK_STAGE_PNG = 106;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final ExecutorService PREVIEW = Executors.newSingleThreadExecutor();
     private static final ExecutorService DETAILS = Executors.newSingleThreadExecutor();
@@ -120,6 +121,8 @@ public final class MainActivity extends Activity {
     private SharedImportPolicy.Request pendingShare;
     private boolean shareHandled;
     private AtomicBoolean sharedCancel;
+    private AtomicBoolean pngCancel;
+    private AddonPackage pendingGeneratedAddon;
     private boolean busy;
     private long lastStickMove;
     private volatile String previewKey;
@@ -187,6 +190,8 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         if (sharedCancel != null) sharedCancel.set(true);
+        if (pngCancel != null) pngCancel.set(true);
+        if (pendingGeneratedAddon != null) AddonPackage.erase(pendingGeneratedAddon.stageRoot);
         if (Build.VERSION.SDK_INT >= 33 && backCallback != null)
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
         getSharedPreferences(PREFS, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(libraryChanged);
@@ -850,9 +855,132 @@ public final class MainActivity extends Activity {
         }
         discardUnreviewedImports();
         showActionSheet("Import exactly one add-on · source folder only", new String[]{
-                "Character ZIP", "Character folder", "Stage ZIP", "Stage folder"},
+                "Character ZIP", "Character folder", "Stage ZIP", "Stage folder",
+                "Experimental · PNG to static stage"},
                 new Runnable[]{() -> pickAddon("chars", true), () -> pickAddon("chars", false),
-                        () -> pickAddon("stages", true), () -> pickAddon("stages", false)});
+                        () -> pickAddon("stages", true), () -> pickAddon("stages", false), this::pickStagePng});
+    }
+
+    private void pickStagePng() {
+        if (busy || library == null || binding == null || binding.sourceTree == null) return;
+        importLibrary = library;
+        importBinding = binding;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/png");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivityForResult(intent, PICK_STAGE_PNG);
+    }
+
+    private void stagePickedPng(Uri uri) {
+        File current = importLibrary;
+        LibraryBinding expected = importBinding;
+        importLibrary = null; importBinding = null;
+        if (current == null || expected == null || !sameBinding(current, expected)
+                || busy || !pendingImports().isEmpty()) {
+            showStatus("Reconnect the source or resolve import recovery before creating a stage."); return;
+        }
+        discardUnreviewedImports();
+        AtomicBoolean canceled = new AtomicBoolean();
+        pngCancel = canceled;
+        busy = true;
+        LinearLayout panel = column();
+        panel.addView(sheetTitle("Experimental PNG stage"),
+                new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(label("Reading a bounded PNG into a private static stage. Source files are unchanged.", 15, false));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        panel.addView(button("Cancel creation", () -> {
+            canceled.set(true); dismissSheet(); showStatus("Canceling PNG stage creation…");
+        }), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
+        IO.execute(() -> {
+            File temp = null;
+            AddonPackage addon = null;
+            try {
+                expected.requireCurrent(this);
+                String displayName;
+                try (Cursor cursor = getContentResolver().query(uri,
+                        new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                    if (cursor == null || !cursor.moveToFirst()) throw new IOException("PNG document is unavailable");
+                    displayName = cursor.getString(0);
+                }
+                String slug = PngStageGenerator.slug(displayName);
+                temp = new File(getCacheDir(), "png-stage-" + UUID.randomUUID());
+                File folder = new File(temp, slug);
+                if (!temp.mkdir() || !folder.mkdir()) throw new IOException("Cannot prepare private stage folder");
+                InputStream input = getContentResolver().openInputStream(uri);
+                PngStageGenerator.Result result = PngStageGenerator.generate(input, folder, slug, canceled::get);
+                if (canceled.get()) throw new IOException("PNG stage creation canceled");
+                addon = AddonPackage.fromFolder(LibraryFiles.local(folder), importRoot(), "stages");
+                expected.requireCurrent(this);
+                File background = new File(addon.directory, result.background.getName());
+                AddonPackage.erase(temp); temp = null;
+                AddonPackage ready = addon;
+                runOnUiThread(() -> {
+                    if (isDestroyed() || canceled.get() || !sameBinding(current, expected)) {
+                        AddonPackage.erase(ready.stageRoot);
+                        if (!isDestroyed()) { busy = false; pngCancel = null; dismissSheet();
+                            showStatus("PNG stage canceled or source changed; source unchanged."); }
+                        return;
+                    }
+                    busy = false; pngCancel = null;
+                    pendingGeneratedAddon = ready;
+                    showPngStagePreview(current, expected, ready, background, result.cropNote);
+                });
+            } catch (Exception error) {
+                if (addon != null) AddonPackage.erase(addon.stageRoot);
+                if (temp != null) AddonPackage.erase(temp);
+                runOnUiThread(() -> { if (!isDestroyed()) {
+                    busy = false; pngCancel = null; dismissSheet();
+                    showStatus("PNG stage unavailable: " + error.getMessage());
+                } });
+            }
+        });
+    }
+
+    private void showPngStagePreview(File current, LibraryBinding expected, AddonPackage addon,
+                                     File background, String cropNote) {
+        BitmapFactory.Options previewOptions = new BitmapFactory.Options();
+        previewOptions.inSampleSize = 2;
+        Bitmap preview = BitmapFactory.decodeFile(background.getAbsolutePath(), previewOptions);
+        if (preview == null) {
+            pendingGeneratedAddon = null; AddonPackage.erase(addon.stageRoot);
+            dismissSheet();
+            showStatus("Generated background could not be previewed; source unchanged."); return;
+        }
+        LinearLayout panel = column();
+        panel.addView(sheetTitle("Experimental · preview cropped stage"),
+                new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = column();
+        content.addView(label("Stage: " + addon.name + "\n" + cropNote
+                + "\nStatic 2D backdrop only. Gameplay appearance is unverified. Install still requires the next add-only review.",
+                compactLayout ? 14 : 15, false));
+        ImageView image = new ImageView(this);
+        image.setImageBitmap(preview);
+        image.setAdjustViewBounds(true);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        content.addView(image, new LinearLayout.LayoutParams(-1, dp(compactLayout ? 170 : 250)));
+        scroll.addView(content);
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        panel.addView(button("Continue to add-only import review", () -> {
+            pendingGeneratedAddon = null; dismissSheet();
+            busy = true;
+            IO.execute(() -> {
+                try { reviewStagedAddon(addon, current, expected, "Experimental PNG stage"); }
+                catch (Exception error) {
+                    AddonPackage.erase(addon.stageRoot);
+                    runOnUiThread(() -> { if (!isDestroyed()) { busy = false;
+                        showStatus("Import review unavailable: " + error.getMessage()); } });
+                }
+            });
+        }), new LinearLayout.LayoutParams(-1, dp(48)));
+        panel.addView(button("Discard private stage", () -> {
+            pendingGeneratedAddon = null; dismissSheet(); AddonPackage.erase(addon.stageRoot);
+            showStatus("PNG stage discarded; source unchanged.");
+        }), new LinearLayout.LayoutParams(-1, dp(48)));
+        presentSheet(panel, scroll);
     }
 
     private void pickAddon(String kind, boolean zip) {
@@ -2215,7 +2343,7 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
-            if (request == PICK_ADDON_ZIP || request == PICK_ADDON_FOLDER) {
+            if (request == PICK_ADDON_ZIP || request == PICK_ADDON_FOLDER || request == PICK_STAGE_PNG) {
                 importKind = null; importLibrary = null; importBinding = null;
             }
             if (request == RECONNECT_TREE) reconnectLibrary = null;
@@ -2226,6 +2354,7 @@ public final class MainActivity extends Activity {
             return;
         }
         Uri uri = data.getData();
+        if (request == PICK_STAGE_PNG) { stagePickedPng(uri); return; }
         if (request == PICK_ADDON_ZIP || request == PICK_ADDON_FOLDER) {
             stagePickedAddon(uri, data, request == PICK_ADDON_ZIP);
             return;
@@ -2962,6 +3091,14 @@ public final class MainActivity extends Activity {
     }
 
     private void handleBack() {
+        if (pngCancel != null) {
+            pngCancel.set(true); dismissSheet(); showStatus("Canceling PNG stage creation…"); return;
+        }
+        if (pendingGeneratedAddon != null) {
+            AddonPackage.erase(pendingGeneratedAddon.stageRoot);
+            pendingGeneratedAddon = null; dismissSheet();
+            showStatus("PNG stage discarded; source unchanged."); return;
+        }
         if (sharedCancel != null) {
             sharedCancel.set(true); dismissSheet(); showStatus("Canceling shared ZIP transfer…"); return;
         }
