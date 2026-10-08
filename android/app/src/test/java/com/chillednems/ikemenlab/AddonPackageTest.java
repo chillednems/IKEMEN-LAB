@@ -43,6 +43,17 @@ public final class AddonPackageTest {
         assertTrue(new File(staged.directory, "Hero.def").isFile());
     }
 
+    @Test public void addonFileNamedLikeJournalCannotMasqueradeAsRecoveryState() throws Exception {
+        File addon = temporary.newFolder("JournalHero");
+        Files.write(new File(addon, "JournalHero.def").toPath(),
+                "[Info]\nname=JournalHero\n[Files]\n".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(addon, "install.properties").toPath(), "ordinary".getBytes(StandardCharsets.UTF_8));
+        AddonPackage staged = AddonPackage.fromFolder(LibraryFiles.local(addon),
+                temporary.newFolder("journal-private"), "chars");
+        assertTrue(new File(staged.directory, "install.properties").isFile());
+        assertNull(AddonInstallTransaction.pendingDescription(staged.stageRoot));
+    }
+
     @Test public void zipStagesSingleRootAndRejectsCaseFoldedDirectoryConflict() throws Exception {
         AddonPackage staged = AddonPackage.fromZip(new ByteArrayInputStream(zip(
                 "Hero/Hero.def", "[Files]\n", "Hero/hero.sff", "pixels")),

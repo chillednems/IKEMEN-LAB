@@ -64,10 +64,12 @@ final class AddonPackage {
             throw new IOException("Choose one real add-on folder; links are unsupported");
         String name = validSegment(folder.name());
         File staging = createStage(privateRoot);
-        Collector collector = new Collector(staging);
+        File content = new File(staging, "content");
+        if (!content.mkdir()) { erase(staging); throw new IOException("Cannot stage add-on contents"); }
+        Collector collector = new Collector(content);
         try {
             copyFolder(folder, "", 0, collector);
-            return finish(staging, staging, name, kind, collector);
+            return finish(staging, content, name, kind, collector);
         } catch (IOException failure) { erase(staging); throw failure; }
     }
 
