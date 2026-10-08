@@ -66,10 +66,18 @@ final class MetadataDetails {
 
     static String boundedText(LibraryFiles.Node node) throws IOException {
         String text = LibraryScanner.readTextBytes(LibraryFiles.readLimited(node, MAX_FILE_BYTES), node.name());
-        int lines = 1;
-        for (int i = 0; i < text.length(); i++) if (text.charAt(i) == '\n' && ++lines > MAX_LINES)
-            throw new IOException("Metadata has too many lines");
+        requireLineLimit(text, "Metadata");
         return text;
+    }
+
+    private static void requireLineLimit(String text, String label) throws IOException {
+        int lines = 1;
+        for (int i = 0; i < text.length(); i++) {
+            char value = text.charAt(i);
+            if (value == '\r' || value == '\n' && (i == 0 || text.charAt(i - 1) != '\r')) {
+                if (++lines > MAX_LINES) throw new IOException(label + " has too many lines");
+            }
+        }
     }
 
     private static void add(List<String> fields, Map<String, Map<String, String>> def,
@@ -79,9 +87,7 @@ final class MetadataDetails {
     }
 
     static List<String> parseCommands(String text) throws IOException {
-        int lines = 1;
-        for (int i = 0; i < text.length(); i++) if (text.charAt(i) == '\n' && ++lines > MAX_LINES)
-            throw new IOException("CMD has too many lines");
+        requireLineLimit(text, "CMD");
         List<String> result = new ArrayList<>();
         String name = null, input = null;
         boolean command = false;

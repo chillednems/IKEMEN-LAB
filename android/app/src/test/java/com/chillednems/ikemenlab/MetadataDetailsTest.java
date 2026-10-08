@@ -68,6 +68,14 @@ public final class MetadataDetailsTest {
         assertTrue(LibraryScanner.readTextBytes(western, "legacy.def").contains("Caf\u00e9"));
         try { MetadataDetails.parseCommands("[Command]\nname=x\n".repeat(10_001)); fail("Excessive lines accepted"); }
         catch (IOException expected) { assertTrue(expected.getMessage().contains("lines")); }
+        Entry crOnly = new Entry("old.def", "x\r".repeat(10_001));
+        try { MetadataDetails.boundedText(crOnly); fail("CR-only DEF exceeded line limit"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("lines")); }
+        try { MetadataDetails.parseCommands("x\r".repeat(10_001)); fail("CR-only CMD exceeded line limit"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("lines")); }
+        assertTrue(MetadataDetails.parseCommands("x\r\n".repeat(9_999)).isEmpty());
+        try { MetadataDetails.parseCommands("x\r\n".repeat(10_000)); fail("CRLF CMD exceeded line limit"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("lines")); }
     }
 
     @Test public void stageShowsBoundsAndMusicButNoCommandInputs() throws Exception {
