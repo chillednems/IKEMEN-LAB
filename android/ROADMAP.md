@@ -1,6 +1,6 @@
-# Android 0.7.0 candidate and remaining roadmap
+# Android 0.7.0 and remaining roadmap
 
-The [published 0.6.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0) is the baseline. The features below are now on the `codex/android-library` development branch for a 0.7.0 signed candidate; they are not in the 0.6.0 APK. `main` receives Android only in a later approved rollout. The 0.7.0 candidate needs its own signed build, privacy gate, and upgrade validation before publication.
+The [published 0.7.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.7.0) includes the features below. The [0.6.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0) remains the direct-source baseline described below. Android development targets `codex/android-library`; `main` receives Android only in a later approved rollout. The 0.7.0 APK was built from [source commit `f7d01ca`](https://github.com/chillednems/IKEMEN-LAB/commit/f7d01cac3de7335d4f554ad59108a3cf37a53bc5) and passed signed build, privacy, and synthetic emulator upgrade checks.
 
 ## Published 0.6.0 baseline
 
@@ -8,7 +8,7 @@ The selected library's `chars/` and `stages/` stay in place through Android's pe
 
 Export reviews the working `select.def` against the linked source, warns by default when unchanged, and offers an explicit **Export anyway** path. The preimage backup can go to the source `select-backups` folder, the app's backup directory, or a user-selected writable folder. Export and restore retain source and backup recovery checks.
 
-## 0.7.0 candidate feature sequence
+## Published 0.7.0 features
 
 1. **Screenpack-aware roster:** Resolve `save/config.ini` motif, `system.def`, and the active select target. Show a bounded approximate slot grid, capacity, overflow, and an ordered list. Touch and controller reorder affect only the private working roster when the active target is verified as `data/select.def`. Screenpack art, spacing, and actual engine placement are not edited or reproduced.
 2. **Browser and details:** Recycled list/grid thumbnails, expanded bounded DEF and CMD input-definition views, source-specific manual tags, conservative inferred cues, and type/status/tag filtering. CMD labels are static definitions, not verified playable moves.
