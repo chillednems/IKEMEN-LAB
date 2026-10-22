@@ -20,14 +20,18 @@ import java.util.Properties;
 public final class SafSelectTarget implements SelectStorage.External {
     private static final String MIME_DIR = DocumentsContract.Document.MIME_TYPE_DIR;
     private final ContentResolver resolver;
-    private final Uri tree, data, select, backupTree;
+    private final Uri tree, selectFolder, select, backupTree;
     private final boolean customBackup;
     private final String identity;
+    private final String sourceBackupNamespace;
 
     public SafSelectTarget(ContentResolver resolver, Uri tree) throws IOException {
-        this(resolver, tree, null);
+        this(resolver, tree, null, "data/select.def");
     }
     public SafSelectTarget(ContentResolver resolver, Uri tree, Uri customBackupTree) throws IOException {
+        this(resolver, tree, customBackupTree, "data/select.def");
+    }
+    public SafSelectTarget(ContentResolver resolver, Uri tree, Uri customBackupTree, String selectPath) throws IOException {
         this.resolver = resolver; this.tree = tree;
         this.backupTree = customBackupTree == null ? tree : customBackupTree;
         this.customBackup = customBackupTree != null;
@@ -38,11 +42,29 @@ public final class SafSelectTarget implements SelectStorage.External {
             requireGrant(resolver, backupTree, false);
         }
         Uri root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-        data = exactChild(root, "data", true);
-        if (data == null) throw new IOException("Source has no data folder");
-        select = exactChild(data, "select.def", false);
-        if (select == null) throw new IOException("Source has no existing select.def; choose a destination");
+        String[] segments = selectPath == null ? new String[0] : selectPath.split("/", -1);
+        if (segments.length < 1) throw new IOException("Invalid linked select target");
+        Uri parent = root;
+        for (int i = 0; i < segments.length - 1; i++) {
+            if (!safeSegment(segments[i])) throw new IOException("Invalid linked select target");
+            parent = exactChild(parent, segments[i], true);
+            if (parent == null) throw new IOException("Linked select folder is missing: " + selectPath);
+        }
+        if (!safeSegment(segments[segments.length - 1])
+                || !segments[segments.length - 1].toLowerCase(Locale.ROOT).endsWith(".def"))
+            throw new IOException("Invalid linked select target");
+        selectFolder = parent;
+        select = exactChild(selectFolder, segments[segments.length - 1], false);
+        if (select == null) throw new IOException("Linked select target is missing: " + selectPath);
         identity = select.toString();
+        sourceBackupNamespace = sourceBackupNamespaceFor(selectPath, identity);
+    }
+    private static boolean safeSegment(String segment) {
+        return !segment.isEmpty() && !segment.equals(".") && !segment.equals("..")
+                && segment.indexOf(':') < 0 && segment.indexOf('\\') < 0 && segment.indexOf('\0') < 0;
+    }
+    static String sourceBackupNamespaceFor(String selectPath, String sourceIdentity) {
+        return "data/select.def".equalsIgnoreCase(selectPath) ? null : customNamespaceFor(sourceIdentity);
     }
 
     public static void requireGrant(ContentResolver resolver, Uri tree, boolean write) throws IOException {
@@ -59,7 +81,7 @@ public final class SafSelectTarget implements SelectStorage.External {
     }
     @Override public String backupLabel() {
         return customBackup ? "Custom backup folder " + backupTree.getLastPathSegment()
-                : "Source data/select-backups";
+                : "Source select-backups" + (sourceBackupNamespace == null ? "" : "/" + sourceBackupNamespace);
     }
     @Override public byte[] read() throws IOException {
         requireGrant(resolver, tree, false);
@@ -201,11 +223,21 @@ public final class SafSelectTarget implements SelectStorage.External {
                 return folder;
             } catch (RuntimeException invalid) { throw new IOException("Custom backup folder is unavailable", invalid); }
         }
-        Uri folder = exactChild(data, "select-backups", true);
+        Uri folder = exactChild(selectFolder, "select-backups", true);
         if (folder == null && create) {
-            try { folder = DocumentsContract.createDocument(resolver, data, MIME_DIR, "select-backups"); }
+            try { folder = DocumentsContract.createDocument(resolver, selectFolder, MIME_DIR, "select-backups"); }
             catch (Exception failure) { throw new IOException("Could not create source backup directory", failure); }
             if (folder != null) ManagedBackupFormat.requireExactName("select-backups", displayName(folder));
+        }
+        if (folder != null && sourceBackupNamespace != null) {
+            String namespace = sourceBackupNamespace;
+            Uri scoped = exactChild(folder, namespace, true);
+            if (scoped == null && create) {
+                try { scoped = DocumentsContract.createDocument(resolver, folder, MIME_DIR, namespace); }
+                catch (Exception failure) { throw new IOException("Could not create target backup directory", failure); }
+                if (scoped != null) ManagedBackupFormat.requireExactName(namespace, displayName(scoped));
+            }
+            folder = scoped;
         }
         return folder;
     }

@@ -33,7 +33,13 @@ final class ScreenpackStatus {
         List<String> motifParts = normalize(motif, new ArrayList<>());
         if (motifParts == null) return new ScreenpackStatus(motif, "Unknown", "Motif path is unsafe or unsupported.", 0, 0, false);
         LibraryFiles.Node system = safeResolve(root, join(motifParts));
-        if (system == null) return new ScreenpackStatus(motif, "Unknown", "Active system.def is missing; roster target and capacity are unknown.", 0, 0, false);
+        if (system == null) {
+            if (join(motifParts).equalsIgnoreCase("data/system.def")
+                    && safeResolve(root, "data/select.def") != null)
+                return new ScreenpackStatus(motif, "data/select.def",
+                        "Default system.def is missing; using the existing global select.def. Select capacity is unknown.", 0, 0, true);
+            return new ScreenpackStatus(motif, "Unknown", "Active system.def is missing; roster target and capacity are unknown.", 0, 0, false);
+        }
         Map<String, Map<String, String>> parsed = parse(system);
         int rows = dimension(DefParser.value(parsed, "select info", "rows", ""));
         int cols = dimension(DefParser.value(parsed, "select info", "columns", ""));
@@ -47,7 +53,7 @@ final class ScreenpackStatus {
         LibraryFiles.Node select = safeResolve(root, target);
         if (select == null) return new ScreenpackStatus(motif, target, "Screenpack select.def is missing. This working roster may not be used by the game.", rows, cols, false);
         boolean global = target.equalsIgnoreCase("data/select.def");
-        return new ScreenpackStatus(motif, target, global ? null : "Active screenpack uses another select.def. Roster arrangement and linked export are unavailable for this source.", rows, cols, global);
+        return new ScreenpackStatus(motif, target, global ? null : "Active screenpack uses " + target + ".", rows, cols, global);
     }
 
     private static Map<String, Map<String, String>> parse(LibraryFiles.Node file) throws IOException {

@@ -11,4 +11,15 @@ public final class SafSelectTargetNamespaceTest {
         assertEquals(a, SafSelectTarget.customNamespaceFor("content://provider/tree/A/document/A%3Adata%2Fselect.def"));
         assertTrue(a.startsWith("ikemen-select-"));
     }
+
+    @Test public void sourceBackupsForTwoSelectFilesInOneFolderUseDistinctFolders() {
+        String global = "content://provider/tree/game/document/game%3Adata%2Fselect.def";
+        String alternate = "content://provider/tree/game/document/game%3Adata%2Falternate.def";
+        assertNull(SafSelectTarget.sourceBackupNamespaceFor("data/select.def", global));
+        String alternateFolder = SafSelectTarget.sourceBackupNamespaceFor("data/alternate.def", alternate);
+        assertNotNull(alternateFolder);
+        assertEquals(alternateFolder, SafSelectTarget.sourceBackupNamespaceFor("data/alternate.def", alternate));
+        assertNotEquals(alternateFolder,
+                SafSelectTarget.sourceBackupNamespaceFor("data/other.def", "content://provider/tree/game/document/game%3Adata%2Fother.def"));
+    }
 }

@@ -33,7 +33,7 @@ final class BackupTargetRouter implements SelectStorage.External {
         binding.requireCurrent(context);
         policy.requireCurrent(context);
         SafSelectTarget linked;
-        try { linked = new SafSelectTarget(context.getContentResolver(), binding.sourceTree); }
+        try { linked = new SafSelectTarget(context.getContentResolver(), binding.sourceTree, null, binding.selectPath); }
         catch (IOException unavailable) {
             if (!allowOffline) throw unavailable;
             linked = null;
@@ -45,7 +45,7 @@ final class BackupTargetRouter implements SelectStorage.External {
         add(app);
         for (Uri tree : policy.knownCustomTrees) {
             if (source == null) break;
-            try { add(new SafSelectTarget(context.getContentResolver(), binding.sourceTree, tree),
+            try { add(new SafSelectTarget(context.getContentResolver(), binding.sourceTree, tree, binding.selectPath),
                     "Custom folder " + policy.displayNameFor(tree)); }
             catch (IOException unavailable) { unavailableHistory++; }
         }
@@ -58,7 +58,7 @@ final class BackupTargetRouter implements SelectStorage.External {
                 }
                 if (policy.customTree == null) throw new IOException("Custom backup folder is not selected");
                 SelectStorage.External chosen;
-                try { chosen = new SafSelectTarget(context.getContentResolver(), binding.sourceTree, policy.customTree); }
+                try { chosen = new SafSelectTarget(context.getContentResolver(), binding.sourceTree, policy.customTree, binding.selectPath); }
                 catch (IOException unavailable) {
                     if (!allowOffline) throw unavailable;
                     unavailableHistory++;
