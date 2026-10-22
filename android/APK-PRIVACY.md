@@ -23,8 +23,8 @@ python3 scripts/apk_privacy_scan.py /absolute/path/to/signed.apk \
   --source-sha "$BUILD_SOURCE_SHA" \
   --local-deny-file /absolute/path/to/private-deny-terms.txt \
   --release-signed \
-  --expected-version-code 7 \
-  --expected-version-name 0.7.0 \
+  --expected-version-code 8 \
+  --expected-version-name 0.7.1 \
   --report /absolute/path/to/private-apk-privacy-report.json
 ```
 

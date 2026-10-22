@@ -4,6 +4,8 @@ IKEMEN Lab lets you browse an unpacked IKEMEN or MUGEN library, preview supporte
 
 **Published version:** [Android 0.7.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.7.0) is the current prerelease. Install its signed APK over an earlier release-signed version. The older [0.5.0 release](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.5.0) copied a selected library into private storage; its [historical README](https://github.com/chillednems/IKEMEN-LAB/blob/android-v0.5.0/android/README.md) describes that behavior. `main` has not received the Android app.
 
+**Preparing 0.7.1:** This branch sets version code 8 and version name 0.7.1 for the export and roster arrangement fixes below. A 0.7.1 APK is not published until the signed candidate passes its separate release checks.
+
 **New in 0.7.0:** The browser grid, screenpack-aware roster, metadata and tags, collections, add-only import, confirmed engine launch, shared ZIP review, and experimental PNG stage generation described below are in the published 0.7.0 APK. They were not in [0.6.0](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0). The published APK was built from [source commit `f7d01ca`](https://github.com/chillednems/IKEMEN-LAB/commit/f7d01cac3de7335d4f554ad59108a3cf37a53bc5); later documentation commits do not change its bytes.
 
 The [0.6.0 screenshots](screenshots/README.md#060) show the visible Export action, current Settings values, and the selected character preview setting with self-created sample content.
@@ -77,7 +79,7 @@ The signed 0.7.0 APK passed synthetic emulator checks for a clean install, upgra
 
 ## Build from source
 
-The package ID is `com.chillednems.ikemenlab`; this branch is version 0.7.0 (version code 7). Install JDK 17 and Android SDK platform/build tools 36. From `android/`, run:
+The package ID is `com.chillednems.ikemenlab`; this branch is version 0.7.1 (version code 8). Install JDK 17 and Android SDK platform/build tools 36. From `android/`, run:
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug

@@ -1,6 +1,8 @@
-# Android 0.7.0 and remaining roadmap
+# Android 0.7.1 preparation and remaining roadmap
 
 The [published 0.7.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.7.0) includes the features below. The [0.6.0 prerelease](https://github.com/chillednems/IKEMEN-LAB/releases/tag/android-v0.6.0) remains the direct-source baseline described below. Android development targets `codex/android-library`; `main` receives Android only in a later approved rollout. The 0.7.0 APK was built from [source commit `f7d01ca`](https://github.com/chillednems/IKEMEN-LAB/commit/f7d01cac3de7335d4f554ad59108a3cf37a53bc5) and passed signed build, privacy, and synthetic emulator upgrade checks.
+
+The 0.7.1 source candidate increments Android to version code 8/name 0.7.1. It keeps Export focusable and gives a review or actionable unavailable reason, binds new private rosters to the resolved active screenpack select file, isolates alternate-target source backups, and adds touch selection and destination moves to the roster grid. It is not yet a published APK. Signed-artifact privacy, upgrade, and release QA apply to the exact 0.7.1 candidate before publication.
 
 ## Published 0.6.0 baseline
 
