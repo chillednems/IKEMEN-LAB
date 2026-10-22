@@ -9,6 +9,7 @@ IKEMEN Lab lets you browse an unpacked IKEMEN or MUGEN library, preview supporte
 The [0.6.0 screenshots](screenshots/README.md#060) show the visible Export action, current Settings values, and the selected character preview setting with self-created sample content.
 
 The export and arrangement fixes described below are on the Android development branch after the published 0.7.0 APK. They are not in that published APK yet.
+See the [synthetic roster grid and alternate-target Export screenshots](screenshots/README.md#export-and-roster-arrangement-fix-android-development-branch) from the tested debug candidate.
 
 ## Start using Android
 

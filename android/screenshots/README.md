@@ -58,6 +58,16 @@ The preview setting marks **Neutral over portrait** as the current choice with a
 
 The static preview reads the active motif's select-screen capacity and shows the five occupied roster slots, including random and empty slots, with two beyond capacity. This is an approximate slot-order view; in-game placement may differ. The capture uses a self-created demonstration library and the tested `600f115` debug APK.
 
+## Export and roster arrangement fix (Android development branch)
+
+![Selected synthetic character slot in the editable roster grid](android-roster-grid-selected-synthetic.png)
+
+Tap a slot and then its destination to move the private working roster. This capture shows the selected slot and the ordered list controls with a synthetic library whose default `system.def` is missing; capacity is unknown, but its existing global `select.def` remains editable.
+
+![Reviewed export to a synthetic screenpack's active select file](android-alternate-select-export-review-synthetic.png)
+
+The review names the active `data/qa_pack/select.def`, its source backup folder, and a two-position order change before any overwrite. Both captures use public-safe synthetic content and the debug APK built from `e4f4e94` (SHA-256 `7d946446bcff9979b61866d086590c8b332560aa712151ea331fb4011d734227`). They are development evidence, not screenshots of the published 0.7.0 APK.
+
 ## Recycled Android browser (feature branch)
 
 ![Synthetic character thumbnails in the Android library grid](android-browser-grid-synthetic.png)
