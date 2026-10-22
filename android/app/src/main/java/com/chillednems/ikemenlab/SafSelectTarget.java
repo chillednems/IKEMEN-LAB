@@ -24,6 +24,7 @@ public final class SafSelectTarget implements SelectStorage.External {
     private final boolean customBackup;
     private final String identity;
     private final String sourceBackupNamespace;
+    private final String sourceBackupLabel;
 
     public SafSelectTarget(ContentResolver resolver, Uri tree) throws IOException {
         this(resolver, tree, null, "data/select.def");
@@ -58,6 +59,7 @@ public final class SafSelectTarget implements SelectStorage.External {
         if (select == null) throw new IOException("Linked select target is missing: " + selectPath);
         identity = select.toString();
         sourceBackupNamespace = sourceBackupNamespaceFor(selectPath, identity);
+        sourceBackupLabel = sourceBackupLabelFor(selectPath, sourceBackupNamespace);
     }
     private static boolean safeSegment(String segment) {
         return !segment.isEmpty() && !segment.equals(".") && !segment.equals("..")
@@ -65,6 +67,11 @@ public final class SafSelectTarget implements SelectStorage.External {
     }
     static String sourceBackupNamespaceFor(String selectPath, String sourceIdentity) {
         return "data/select.def".equalsIgnoreCase(selectPath) ? null : customNamespaceFor(sourceIdentity);
+    }
+    static String sourceBackupLabelFor(String selectPath, String namespace) {
+        int slash = selectPath.lastIndexOf('/');
+        return "Source " + (slash < 0 ? "" : selectPath.substring(0, slash + 1))
+                + "select-backups" + (namespace == null ? "" : "/" + namespace);
     }
 
     public static void requireGrant(ContentResolver resolver, Uri tree, boolean write) throws IOException {
@@ -81,7 +88,7 @@ public final class SafSelectTarget implements SelectStorage.External {
     }
     @Override public String backupLabel() {
         return customBackup ? "Custom backup folder " + backupTree.getLastPathSegment()
-                : "Source select-backups" + (sourceBackupNamespace == null ? "" : "/" + sourceBackupNamespace);
+                : sourceBackupLabel;
     }
     @Override public byte[] read() throws IOException {
         requireGrant(resolver, tree, false);

@@ -21,5 +21,10 @@ public final class SafSelectTargetNamespaceTest {
         assertEquals(alternateFolder, SafSelectTarget.sourceBackupNamespaceFor("data/alternate.def", alternate));
         assertNotEquals(alternateFolder,
                 SafSelectTarget.sourceBackupNamespaceFor("data/other.def", "content://provider/tree/game/document/game%3Adata%2Fother.def"));
+        assertEquals("Source data/select-backups", SafSelectTarget.sourceBackupLabelFor("data/select.def", null));
+        assertEquals("Source data/select-backups/" + alternateFolder,
+                SafSelectTarget.sourceBackupLabelFor("data/alternate.def", alternateFolder));
+        assertEquals("Source data/qa_pack/select-backups/" + alternateFolder,
+                SafSelectTarget.sourceBackupLabelFor("data/qa_pack/select.def", alternateFolder));
     }
 }

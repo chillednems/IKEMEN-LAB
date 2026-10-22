@@ -94,7 +94,10 @@ final class BackupTargetRouter implements SelectStorage.External {
         current();
         return "policy:" + policy.generation + ":" + active.backupIdentity();
     }
-    @Override public String backupLabel() throws IOException { current(); return policy.displayName(); }
+    @Override public String backupLabel() throws IOException {
+        current();
+        return policy.kind == BackupPolicy.Kind.SOURCE ? active.backupLabel() : policy.displayName();
+    }
     @Override public String backup(byte[] preimage, String transactionId) throws IOException {
         current(); return active.backup(preimage, transactionId);
     }
