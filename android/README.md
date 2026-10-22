@@ -8,11 +8,13 @@ IKEMEN Lab lets you browse an unpacked IKEMEN or MUGEN library, preview supporte
 
 The [0.6.0 screenshots](screenshots/README.md#060) show the visible Export action, current Settings values, and the selected character preview setting with self-created sample content.
 
+The export and arrangement fixes described below are on the Android development branch after the published 0.7.0 APK. They are not in that published APK yet.
+
 ## Start using Android
 
-1. Open **Settings → Source folder** and choose the unpacked library root containing `chars/` and `stages/`. Grant lasting read access, and write access if you want to export to its existing `data/select.def`. The app remembers this folder across launches. It reads character and stage files **in place**; it does not duplicate those folders in app storage.
+1. Open **Settings → Source folder** and choose the unpacked library root containing `chars/` and `stages/`. Grant lasting read access, and write access if you want to export to its existing active screenpack select file. The app remembers this folder across launches. It reads character and stage files **in place**; it does not duplicate those folders in app storage.
 2. Search or scroll the library. Tap an item once to select it and again to enable or disable it. With physical controls, move focus using the D-pad or left stick and press **A** to select, then **A** again to toggle; **B** clears selection or goes back. Details show the artwork below the name, author, and reference. Missing entries stay visible in red with a text warning; disable them if needed, but restore their files before enabling them.
-3. Use **Export** on the main screen when you want the working roster written to the source `data/select.def`. The button stays visible in landscape, portrait, and compact layouts. If export is unavailable, the screen says why. You can also save a separate copy through **Roster actions → Save a copy elsewhere**.
+3. Use **Export** on the main screen when you want the working roster written to the linked source select file. The button remains focusable in landscape, portrait, and compact layouts; tapping it opens a review or explains why export is unavailable. You can also save a separate copy through **Roster actions → Save a copy elsewhere**.
 
 ## Android 0.7.0 features
 
@@ -36,11 +38,11 @@ The **View: List/Grid** control changes between a compact list and thumbnail car
 
 [Synthetic PNG stage screenshots](screenshots/README.md#experimental-png-static-stage-feature-branch) show the crop preview, separate import review, and installed static scene.
 
-**Roster actions → Arrange roster · select screen** shows a bounded static preview using the active motif from `save/config.ini`, its `system.def`, and `[Select Info]` rows and columns. It reports active slot count and positions beyond the configured capacity. Character, `randomselect`, and literal `empty` lines appear in order; available character portraits appear in the first visible cells. Use **↑** and **↓** with touch or focus them with the D-pad and press **A** to move a slot in the private working roster. Each move keeps its complete entry, including options and comments. Review **Export** to apply those changes to the linked source.
+**Roster actions → Arrange roster · select screen** shows a bounded static preview using the active motif from `save/config.ini`, its `system.def`, and `[Select Info]` rows and columns. It reports active slot count and positions beyond the configured capacity. Character, `randomselect`, and literal `empty` lines appear in order; available character portraits appear in the first visible cells. Tap a slot and then its destination to move it in the private working roster; tap the selected slot again to cancel. The ordered list also has **↑** and **↓** buttons, available by touch or D-pad and **A**. Each move keeps the entry text, options, and comments while preserving line endings at their original positions. Review **Export** to apply those changes to the linked source.
 
-The preview is an approximation of the engine's select screen. It displays up to 100 occupied positions when the screenpack has 16 or fewer columns; wider layouts use the ordered slot list so positions are not reflowed. It does not reproduce screenpack art, spacing, or game behavior. If the active screenpack points to a separate `select.def`, arrangement and linked export to `data/select.def` are unavailable; the app does not rewrite `system.def`. A missing or unsupported motif gives a warning and an unknown capacity.
+The preview is an approximation of the engine's select screen. It displays up to 100 occupied positions when the screenpack has 16 or fewer columns; wider layouts use the ordered slot list so positions are not reflowed. When capacity is unknown, it uses four preview columns. It does not reproduce screenpack art, spacing, or game behavior. A newly linked source uses the resolved active screenpack select file, including an alternate path. The app does not rewrite `system.def`. If the default `data/system.def` is missing but `data/select.def` exists, arrangement remains available with unknown capacity; a missing or unsupported custom motif remains unavailable until the target can be resolved.
 
-Settings always shows the current source folder, character preview choice, orientation, backup location, retention, and no-change warning state. Source selection and reconnection are both in Settings. Choosing the same source again keeps your unexported working roster; choosing a different source starts a separate working roster without changing either source folder.
+Settings shows the current source folder, character preview choice, orientation, backup location, retention, and no-change warning state. Reconnecting the same source and active target keeps your unexported working roster. If that source's active select target changed, **Source folder** offers an explicit new private working library for the new target; the old roster and backups remain available under **Working libraries**. A pending source export or restore must be resolved before switching. Choosing a different source also starts a separate working roster without changing either source folder.
 
 ## Artwork and layout
 
@@ -50,15 +52,15 @@ Some Android document providers cannot offer seekable access to SFF artwork. In 
 
 ## Review and export `select.def`
 
-The app keeps a small private **working roster** so you can review edits before writing the source. **Export** compares it with the exact existing source `data/select.def`, shows enabled, disabled, added, and removed counts, warns about missing references, and identifies where the verified pre-write backup will go. It refuses to overwrite a source or backup destination that changed after review. A write makes a verified backup of the old source bytes, replaces the existing `select.def`, and reads it back. The linked-source export does not create `select.def.txt`.
+The app keeps a small private **working roster** so you can review edits before writing the source. A new link binds that roster to the active screenpack select path; older links remain bound to their original `data/select.def`. **Export** compares the working roster with that exact existing source document, shows enabled, disabled, added, and removed counts, warns about missing references, and identifies where the verified pre-write backup will go. It refuses to overwrite a source or backup destination that changed after review, or to retarget an existing working roster after the motif changes. A write makes a verified backup of the old source bytes, replaces the existing select document, and reads it back. The linked-source export does not create `select.def.txt`.
 
-If the working and source files match, a warning appears by default with a **Review Export anyway** option. You can turn that extra warning off in **Settings → No-change export warning**. In either mode, exporting still takes a separate tap on the normal review, creates a verified preimage backup, and reads back the source. The setting never starts a write by itself. If the source grants only read access, browse normally and reconnect with write access before exporting. A folder without an existing `data/select.def` can be browsed but has no linked file to overwrite.
+If the working and source files match, a warning appears by default with a **Review Export anyway** option. You can turn that extra warning off in **Settings → No-change export warning**. In either mode, exporting still takes a separate tap on the normal review, creates a verified preimage backup, and reads back the source. The setting never starts a write by itself. If the source grants only read access, browse normally and reconnect with write access before exporting. A folder without an existing active select file can be browsed but has no linked file to overwrite.
 
 ## Choose and restore backups
 
 In **Settings → Select.def backup location**, choose where verified **source preimages** are saved before exports and source restores:
 
-- **Source data/select-backups** is the default and keeps them beside the game data.
+- **Source select-backups** is the default and keeps them beside the linked select file. Alternate select targets use separate folders so backups and retention cannot cross between target files; existing global `data/select-backups` records remain available.
 - **App backup directory** stores them privately, in a source-specific area of the app.
 - **Custom folder** uses a folder you choose. The app creates a source-specific subfolder inside it. If the picker is canceled or the provider cannot grant lasting read/write access, your previous selection stays in place.
 
