@@ -89,7 +89,7 @@ final class BackupPolicy {
         switch (kind) {
             case APP: return "App backup directory";
             case CUSTOM: return customName;
-            default: return "Source data/select-backups";
+            default: return "Source beside linked select file";
         }
     }
     String displayNameFor(Uri tree) {

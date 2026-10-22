@@ -507,10 +507,50 @@ public final class MainActivity extends Activity {
                         "Select.def backup location · " + destination,
                         "Backups to keep · " + retentionLabel(),
                         "No-change export warning · " + (warn ? "On" : "Off"),
-                        "Reconnect source folder"},
+                        "Reconnect source folder", "Working libraries · reopen private rosters"},
                 new Runnable[]{this::pickFolder, this::showPreviewSetting, this::showOrientationSetting,
                         this::showBackupLocationSetting, this::showRetentionSetting,
-                        this::showUnchangedSetting, this::reconnectSource});
+                        this::showUnchangedSetting, this::reconnectSource, this::showWorkingLibraries});
+    }
+
+    private void showWorkingLibraries() {
+        File parent = new File(getFilesDir(), "libraries");
+        List<File> roots = WorkingLibraryCatalog.list(parent);
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        for (File candidate : roots) {
+            try {
+                LibraryBinding saved = LibraryBinding.load(this, candidate);
+                if (saved.sourceTree == null) continue;
+                labels.add(choiceLabel(candidate.equals(library), (saved.displayName == null ? "Source" : saved.displayName)
+                        + " · " + saved.selectPath + (hasPending(candidate) ? " · Recovery pending" : "")
+                        + " · " + candidate.getName().substring(0, 8)));
+                actions.add(() -> switchWorkingLibrary(candidate));
+            } catch (IOException ignored) { }
+        }
+        if (labels.isEmpty()) showDecisionSheet("Working libraries", "No private working libraries are stored.", null, null);
+        else showActionSheet("Working libraries · select to reopen", labels.toArray(new String[0]), actions.toArray(new Runnable[0]));
+    }
+
+    private void switchWorkingLibrary(File candidate) {
+        if (busy || candidate.equals(library)) return;
+        if (library != null && hasPending(library)) {
+            showDecisionSheet("Recovery required", "Finish the current library's pending source operation before switching.",
+                    "Open Recovery", this::showRecovery);
+            return;
+        }
+        if (managedLibrary(candidate.getAbsolutePath()) == null) return;
+        showDecisionSheet("Open private working library",
+                "Switch to the selected private roster? Its source target, edits and backups remain in their own library. The current private roster is retained.",
+                "Open library", () -> {
+                    try { WorkingLibraryCatalog.requireSwitchable(library); }
+                    catch (IOException pending) { showDecisionSheet("Recovery required", pending.getMessage(), "Open Recovery", this::showRecovery); return; }
+                    if (!getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putString(KEY_PATH, candidate.getAbsolutePath()).commit()) {
+                        showStatus("Could not switch working library"); return;
+                    }
+                    syncActiveLibrary(candidate.getAbsolutePath());
+                });
     }
 
     private CharacterPreview.Mode previewMode() {
@@ -1575,6 +1615,7 @@ public final class MainActivity extends Activity {
 
     private void showArrangement(int page) {
         if (busy || library == null) { showStatus("Choose a source folder first."); return; }
+        if (activeSheet == null) selectedArrangementSlot = -1;
         File current = library;
         LibraryBinding expected = binding;
         busy = true;
@@ -1598,6 +1639,7 @@ public final class MainActivity extends Activity {
         panel.addView(sheetTitle("Select screen · approximate slot order"), new LinearLayout.LayoutParams(-1, dp(compactLayout ? 26 : 48)));
         ScrollView scroll = new ScrollView(this);
         LinearLayout content = column();
+        View[] selectedFocus = {null};
         scroll.addView(content);
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         content.addView(label(pack == null ? "Screenpack information unavailable. Refresh the library."
@@ -1605,9 +1647,12 @@ public final class MainActivity extends Activity {
                 + "\nCapacity: " + (pack.capacity() == 0 ? "unknown" : pack.rows + " × " + pack.columns + " = " + pack.capacity())
                 + " · Active slots: " + slots.size()
                 + (pack.capacity() > 0 && slots.size() > pack.capacity() ? " · " + (slots.size() - pack.capacity()) + " beyond capacity" : "")
-                + "\nStatic order preview only; actual game placement may differ."
+                + "\nTap a slot, then tap its destination to move it in the private working roster. Tap the same slot to cancel."
+                + " Actual game placement may differ; use Export after review."
                 + (pack.warning == null ? "" : "\nWarning: " + pack.warning), 15, false));
-        boolean editable = pack != null && pack.globalRoster;
+        boolean editable = pack != null && binding != null && pack.select.equalsIgnoreCase(binding.selectPath)
+                && (pack.globalRoster || pack.knownAlternate);
+        if (!editable) content.addView(label("Moves are unavailable because the active select target is unknown or changed. Relink this source folder to use its current roster.", 14, false));
         int pageSize = 100;
         int pageCount = Math.max(1, (slots.size() + pageSize - 1) / pageSize);
         int currentPage = Math.max(0, Math.min(page, pageCount - 1));
@@ -1617,10 +1662,11 @@ public final class MainActivity extends Activity {
                 + " · page " + (currentPage + 1) + "/" + pageCount, 14, true));
         if (pack != null && pack.capacity() > 0 && pack.columns > 16 && currentPage == 0)
             content.addView(label("Grid preview unavailable for more than 16 columns; the ordered slot list remains available.", 14, false));
-        if (pack != null && pack.capacity() > 0 && pack.columns <= 16 && currentPage == 0) {
-            int previewColumns = pack.columns;
-            int previewCount = Math.min(Math.min(pack.capacity(), slots.size()), 100);
-            content.addView(label("Grid preview · first " + previewCount + " occupied positions", 14, true));
+        if (pack != null && (pack.capacity() == 0 || pack.columns <= 16) && currentPage == 0) {
+            int previewColumns = pack.columns > 0 ? pack.columns : 4;
+            int previewCount = Math.min(pack.capacity() > 0 ? pack.capacity() : slots.size(), Math.min(slots.size(), 100));
+            content.addView(label("Select slots · first " + previewCount + " positions"
+                    + (pack.capacity() == 0 ? " · capacity unknown" : ""), 14, true));
             GridLayout grid = new GridLayout(this);
             grid.setColumnCount(previewColumns);
             for (int i = 0; i < previewCount; i++) {
@@ -1637,6 +1683,16 @@ public final class MainActivity extends Activity {
                 GridLayout.LayoutParams cellParams = new GridLayout.LayoutParams();
                 cellParams.width = dp(66); cellParams.height = dp(82);
                 cellParams.setMargins(dp(1), dp(1), dp(1), dp(1));
+                if (editable) {
+                    final int slotIndex = i;
+                    cell.setFocusable(true);
+                    cell.setClickable(true);
+                    cell.setContentDescription("Roster slot " + (i + 1) + ", " + slot.title
+                            + (selectedArrangementSlot == i ? ", selected. Tap another slot to move here" : ". Tap to select or move"));
+                    focusStyle(cell, selectedArrangementSlot == i);
+                    if (selectedArrangementSlot == i) selectedFocus[0] = cell;
+                    cell.setOnClickListener(view -> selectArrangementSlot(slotIndex, currentPage, arrangement));
+                }
                 grid.addView(cell, cellParams);
                 if (i < 16) loadSlotPortrait(slot, portrait);
             }
@@ -1654,6 +1710,11 @@ public final class MainActivity extends Activity {
             title.setTextColor(labelColor);
             row.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
             if (editable) {
+                row.setFocusable(true);
+                row.setClickable(true);
+                row.setOnClickListener(view -> selectArrangementSlot(slotIndex, currentPage, arrangement));
+                focusStyle(row, selectedArrangementSlot == index);
+                if (selectedArrangementSlot == index && selectedFocus[0] == null) selectedFocus[0] = row;
                 Button up = button("↑", () -> moveSlot(slotIndex, -1, slotIndex / pageSize));
                 Button down = button("↓", () -> moveSlot(slotIndex, 1, slotIndex / pageSize));
                 up.setEnabled(index > 0); down.setEnabled(index + 1 < slots.size());
@@ -1674,6 +1735,23 @@ public final class MainActivity extends Activity {
         panel.addView(pages);
         panel.addView(button("Close", this::dismissSheet), new LinearLayout.LayoutParams(-1, dp(48)));
         presentSheet(panel, scroll);
+        if (selectedFocus[0] != null) selectedFocus[0].requestFocus();
+    }
+
+    private int selectedArrangementSlot = -1;
+
+    private void selectArrangementSlot(int position, int page, RosterArrangement arrangement) {
+        if (busy) return;
+        if (selectedArrangementSlot < 0 || selectedArrangementSlot == position) {
+            selectedArrangementSlot = selectedArrangementSlot == position ? -1 : position;
+            renderArrangement(page, arrangement);
+            showStatus(selectedArrangementSlot < 0 ? "Roster selection cleared."
+                    : "Slot " + (position + 1) + " selected. Tap a destination slot to move it.");
+            return;
+        }
+        int from = selectedArrangementSlot;
+        selectedArrangementSlot = -1;
+        moveSlotTo(from, position, page);
     }
 
     private void loadSlotPortrait(RosterArrangement.Slot slot, ImageView image) {
@@ -1698,6 +1776,10 @@ public final class MainActivity extends Activity {
     }
 
     private void moveSlot(int position, int direction, int page) {
+        moveSlotTo(position, position + direction, page);
+    }
+
+    private void moveSlotTo(int from, int to, int page) {
         if (busy || library == null) return;
         File current = library;
         LibraryBinding source = binding;
@@ -1705,9 +1787,8 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 requireReady(current, source, false);
-                if (!ScreenpackStatus.inspect(openSource(source)).globalRoster)
-                    throw new IOException("Active screenpack does not use data/select.def");
-                RosterArrangement.moveWorking(current, position, direction, retention());
+                source.requireActiveTarget(ScreenpackStatus.inspect(openSource(source)));
+                RosterArrangement.moveWorkingTo(current, from, to, retention());
                 LibraryScanner.Catalog scanned = scanWorking(current, source);
                 runOnUiThread(() -> { if (sameBinding(current, source)) {
                     catalog = scanned; catalogEpoch++; busy = false;
@@ -1818,7 +1899,11 @@ public final class MainActivity extends Activity {
     }
 
     private void reviewSourceExport() {
-        if (busy || library == null) { showStatus("Select a library source first."); return; }
+        if (busy) return;
+        if (library == null) {
+            showDecisionSheet("Export unavailable", "Choose a source folder in Settings before exporting select.def.", "Open Settings", this::showSettings);
+            return;
+        }
         File root = library;
         LibraryBinding current = binding;
         busy = true;
@@ -1826,9 +1911,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 ScreenpackStatus activeScreenpack = ScreenpackStatus.inspect(openSource(current));
-                if (activeScreenpack.knownAlternate)
-                    throw new IOException("Active screenpack select target is " + activeScreenpack.select
-                            + ". Linked export to data/select.def is disabled until the screenpack uses that file.");
+                current.requireActiveTarget(activeScreenpack);
                 SelectStorage.External target = requireReady(root, current, true);
                 SelectStorage storage = new SelectStorage(root, openSource(current));
                 SelectStorage.Snapshot working = storage.readWorking();
@@ -1859,7 +1942,8 @@ public final class MainActivity extends Activity {
                     showStatus(summary());
                 });
             } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
-                busy = false; showStatus("Export preview unavailable: " + error.getMessage());
+                busy = false;
+                showDecisionSheet("Export unavailable", error.getMessage(), "Open Settings", this::showSettings);
             } }); }
         });
     }
@@ -1871,9 +1955,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 ScreenpackStatus activeScreenpack = ScreenpackStatus.inspect(openSource(current));
-                if (activeScreenpack.knownAlternate)
-                    throw new IOException("Active screenpack select target changed to " + activeScreenpack.select
-                            + ". Review export again after restoring data/select.def as the target.");
+                current.requireActiveTarget(activeScreenpack);
                 SelectStorage.External target = requireReady(root, current, true);
                 if (!java.util.Objects.equals(keep, retention()))
                     throw new IOException("Backup retention changed; review export again");
@@ -2096,18 +2178,21 @@ public final class MainActivity extends Activity {
             try { SafSelectTarget.requireGrant(getContentResolver(), binding.sourceTree, true); writable = true; }
             catch (IOException ignored) { }
         }
+        boolean targetMatches = screenpackStatus != null && binding != null
+                && screenpackStatus.select.equalsIgnoreCase(binding.selectPath)
+                && (screenpackStatus.globalRoster || screenpackStatus.knownAlternate);
         boolean ready = library != null && binding != null && binding.sourceTree != null
                 && sourceSelectExists && writable && RosterStore.selectFile(library).isFile()
-                && (screenpackStatus == null || !screenpackStatus.knownAlternate);
-        exportButton.setEnabled(ready);
+                && targetMatches;
+        exportButton.setEnabled(true);
         String reason = library == null ? "Choose a source folder in Settings"
                 : binding == null || binding.sourceTree == null ? "Reconnect source folder in Settings"
-                : !sourceSelectExists ? "Linked source has no data/select.def to overwrite"
-                : screenpackStatus != null && screenpackStatus.knownAlternate ? "Active screenpack select target is " + screenpackStatus.select
+                : !sourceSelectExists ? "Linked source select target is missing"
+                : !targetMatches ? "Active roster target changed or is unknown; relink the source folder"
                 : !writable ? "Reconnect source with write access in Settings"
                 : "Create a working roster before exporting";
-        exportButton.setContentDescription(ready ? "Export select.def to the linked source folder"
-                : "Export unavailable. " + reason + ".");
+        exportButton.setContentDescription(ready ? "Export working roster to " + binding.selectPath
+                : "Export. " + reason + ". Tap for details.");
         if (exportHint != null) {
             exportHint.setVisibility(ready ? View.GONE : View.VISIBLE);
             exportHint.setText("Export unavailable · " + reason + ".");
@@ -2121,9 +2206,7 @@ public final class MainActivity extends Activity {
     }
 
     private static boolean hasPending(File root) {
-        File folder = new File(RosterStore.selectFile(root).getParentFile(), "select-backups");
-        return new File(folder, "pending-export.properties").isFile()
-                || new File(folder, "pending-restore.properties").isFile();
+        return WorkingLibraryCatalog.hasPending(root);
     }
 
     private SelectStorage.External requireReady(File root, LibraryBinding current, boolean needSource) throws IOException {
@@ -2135,7 +2218,8 @@ public final class MainActivity extends Activity {
             catch (IOException inaccessible) { if (needSource || hasPending(root)) throw new IOException(
                     "Source unavailable. Reconnect its folder; your working roster and backups are retained. " + inaccessible.getMessage(), inaccessible); }
         }
-        if (needSource && target == null) throw new IOException("No writable select.def linked. Reconnect source or choose a source with data/select.def.");
+        if (needSource && target == null) throw new IOException("No writable select.def linked. Reconnect the source folder.");
+        if (needSource) current.requireActiveTarget(ScreenpackStatus.inspect(openSource(current)));
         if (hasPending(root)) {
             if (target == null) throw new IOException("Pending source operation: reconnect source folder and open Recovery.");
             SelectStorage storage = new SelectStorage(root);
@@ -2277,6 +2361,7 @@ public final class MainActivity extends Activity {
             return;
         }
         library = active;
+        selectedArrangementSlot = -1;
         catalog = null;
         sourceSelectExists = false;
         screenpackStatus = null;
@@ -2431,46 +2516,44 @@ public final class MainActivity extends Activity {
                 } }); }
             });
         } else if (request == PICK_TREE) {
-            if (library != null && binding != null && uri.equals(binding.sourceTree)) {
-                reconnectLibrary = library;
-                reconnectPickedSource(uri, data);
-                return;
-            }
-            int flags = persistGrant(uri, data);
-            busy = true;
-            showStatus("Linking source folder…");
-            IO.execute(() -> {
-                try {
-                    if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0)
-                        throw new IOException("Choose a folder that grants lasting read access");
-                    LibraryFiles.Node source = new SafLibraryFiles(getContentResolver(), uri).root();
-                    LibraryFiles.Node sourceData = LibraryFiles.child(source, "data");
-                    LibraryFiles.Node sourceSelect = sourceData == null ? null : LibraryFiles.child(sourceData, "select.def");
-                    byte[] roster = sourceSelect == null ? new byte[0]
-                            : LibraryFiles.readLimited(sourceSelect, SelectStorage.MAX_BYTES);
-                    LibraryScanner.Catalog scanned = LibraryScanner.scan(source, roster);
-                    ScreenpackStatus screenpack = ScreenpackStatus.inspect(source);
-                    File workspace = new File(new File(getFilesDir(), "libraries"), UUID.randomUUID().toString());
-                    File workData = new File(workspace, "data");
-                    if (!workData.mkdirs()) throw new IOException("Could not create working roster directory");
-                    try (FileOutputStream output = new FileOutputStream(new File(workData, "select.def"))) {
-                        output.write(roster); output.getFD().sync();
-                    }
-                    LibraryBinding linked = LibraryBinding.bindSource(this, workspace, uri, flags, source.name());
-                    if (!getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_PATH, workspace.getAbsolutePath()).commit())
-                        throw new IOException("Could not remember selected source folder");
-                    runOnUiThread(() -> { if (isDestroyed()) return;
-                        library = workspace; binding = linked; catalog = scanned; catalogEpoch++; selected = null; busy = false;
-                        sourceSelectExists = sourceSelect != null;
-                        screenpackStatus = screenpack;
-                        syncActiveLibrary(workspace.getAbsolutePath()); renderList();
-                        updateExportAvailability();
-                        showStatus((flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
-                                ? "Source linked directly. Character and stage files stay in place."
-                                : "Source linked for browsing. Export needs write permission.");
-                    });
-                } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) { busy = false; showStatus("Could not link source folder: " + error.getMessage()); } }); }
-            });
+            File previousRoot = library;
+            LibraryBinding previousBinding = binding;
+            if (previousRoot != null && previousBinding != null && uri.equals(previousBinding.sourceTree)) {
+                if (hasPending(previousRoot)) {
+                    showDecisionSheet("Recovery required", "Finish the pending source export or restore before changing this source's working roster.",
+                            "Open Recovery", this::showRecovery);
+                    return;
+                }
+                busy = true;
+                showStatus("Checking active select target…");
+                IO.execute(() -> {
+                    try {
+                        LibraryFiles.Node currentSource = new SafLibraryFiles(getContentResolver(), uri).root();
+                        ScreenpackStatus currentPack = ScreenpackStatus.inspect(currentSource);
+                        boolean targetExists = (currentPack.globalRoster || currentPack.knownAlternate)
+                                && LibraryFiles.resolve(currentSource, currentPack.select) != null;
+                        runOnUiThread(() -> { if (!sameBinding(previousRoot, previousBinding)) return;
+                            busy = false;
+                            if (currentPack.select.equalsIgnoreCase(previousBinding.selectPath)) {
+                                reconnectLibrary = previousRoot;
+                                reconnectPickedSource(uri, data);
+                            } else if (!targetExists) {
+                                showDecisionSheet("Active roster unavailable", currentPack.warning == null
+                                        ? "The active select target is missing. The existing private working roster is preserved."
+                                        : currentPack.warning + " The existing private working roster is preserved.", null, null);
+                            } else {
+                                showDecisionSheet("Active roster target changed",
+                                        "This source now uses " + currentPack.select + ". The existing private working roster and backups remain tied to "
+                                                + previousBinding.selectPath + ". Create a new private working library for the new target?"
+                                                + " You can reopen the previous one from Settings > Working libraries.",
+                                        "Create new working library", () -> linkPickedSource(uri, data, true, currentPack.select));
+                            }
+                        });
+                    } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) {
+                        busy = false; showDecisionSheet("Source unavailable", error.getMessage(), null, null);
+                    } }); }
+                });
+            } else linkPickedSource(uri, data, false, null);
         } else if (request == RECONNECT_TREE) {
             reconnectPickedSource(uri, data);
         } else if (request == EXPORT_SELECT) {
@@ -2487,6 +2570,55 @@ public final class MainActivity extends Activity {
                 } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) { busy = false; showStatus("Export failed: " + error.getMessage()); } }); }
             });
         }
+    }
+
+    private void linkPickedSource(Uri uri, Intent data, boolean relinkSameSource, String reviewedPath) {
+            if (library != null && hasPending(library)) {
+                showDecisionSheet("Recovery required", "Finish the pending source operation before relinking.", "Open Recovery", this::showRecovery);
+                return;
+            }
+            int flags = persistGrant(uri, data);
+            File priorRoot = library;
+            busy = true;
+            showStatus("Linking source folder…");
+            IO.execute(() -> {
+                try {
+                    if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0)
+                        throw new IOException("Choose a folder that grants lasting read access");
+                    LibraryFiles.Node source = new SafLibraryFiles(getContentResolver(), uri).root();
+                    ScreenpackStatus screenpack = ScreenpackStatus.inspect(source);
+                    String selectPath = screenpack.globalRoster || screenpack.knownAlternate
+                            ? screenpack.select : "data/select.def";
+                    if (reviewedPath != null && !reviewedPath.equalsIgnoreCase(selectPath))
+                        throw new IOException("Active select target changed since review; choose the source folder again");
+                    LibraryFiles.Node sourceSelect = LibraryFiles.resolve(source, selectPath);
+                    byte[] roster = sourceSelect == null ? new byte[0]
+                            : LibraryFiles.readLimited(sourceSelect, SelectStorage.MAX_BYTES);
+                    LibraryScanner.Catalog scanned = LibraryScanner.scan(source, roster);
+                    File workspace = new File(new File(getFilesDir(), "libraries"), UUID.randomUUID().toString());
+                    File workData = new File(workspace, "data");
+                    if (!workData.mkdirs()) throw new IOException("Could not create working roster directory");
+                    try (FileOutputStream output = new FileOutputStream(new File(workData, "select.def"))) {
+                        output.write(roster); output.getFD().sync();
+                    }
+                    LibraryBinding linked = LibraryBinding.bindSource(this, workspace, uri, flags, source.name(), selectPath);
+                    WorkingLibraryCatalog.requireSwitchable(priorRoot);
+                    if (!getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(KEY_PATH, workspace.getAbsolutePath()).commit())
+                        throw new IOException("Could not remember selected source folder");
+                    runOnUiThread(() -> { if (isDestroyed()) return;
+                        library = workspace; binding = linked; catalog = scanned; catalogEpoch++; selected = null; busy = false;
+                        sourceSelectExists = sourceSelect != null;
+                        screenpackStatus = screenpack;
+                        syncActiveLibrary(workspace.getAbsolutePath()); renderList();
+                        updateExportAvailability();
+                        showStatus(relinkSameSource
+                                ? "Active roster linked as a new private working library. Previous private edits and backups remain stored."
+                                : (flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
+                                ? "Source linked directly. Character and stage files stay in place."
+                                : "Source linked for browsing. Export needs write permission.");
+                    });
+                } catch (Exception error) { runOnUiThread(() -> { if (!isDestroyed()) { busy = false; showStatus("Could not link source folder: " + error.getMessage()); } }); }
+            });
     }
 
     private void reconnectPickedSource(Uri uri, Intent data) {
@@ -2511,9 +2643,9 @@ public final class MainActivity extends Activity {
                 LibraryScanner.Catalog scanned = LibraryScanner.scan(source,
                         new SelectStorage(expected).readWorking().bytes);
                 ScreenpackStatus screenpack = ScreenpackStatus.inspect(source);
-                LibraryFiles.Node sourceData = LibraryFiles.child(source, "data");
-                boolean hasSourceSelect = sourceData != null && LibraryFiles.child(sourceData, "select.def") != null;
-                LibraryBinding restored = LibraryBinding.bindSource(this, expected, uri, flags, source.name());
+                LibraryBinding previous = LibraryBinding.load(this, expected);
+                boolean hasSourceSelect = LibraryFiles.resolve(source, previous.selectPath) != null;
+                LibraryBinding restored = LibraryBinding.bindSource(this, expected, uri, flags, source.name(), previous.selectPath);
                 runOnUiThread(() -> { if (!isDestroyed() && expected.equals(library)) {
                     binding = restored; catalog = scanned; catalogEpoch++; selected = selected == null ? null : find(scanned, selected);
                     sourceSelectExists = hasSourceSelect;
@@ -2562,8 +2694,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 LibraryFiles.Node source = openSource(currentBinding);
-                LibraryFiles.Node sourceData = LibraryFiles.child(source, "data");
-                boolean hasSourceSelect = sourceData != null && LibraryFiles.child(sourceData, "select.def") != null;
+                boolean hasSourceSelect = LibraryFiles.resolve(source, currentBinding.selectPath) != null;
                 LibraryScanner.Catalog scanned = LibraryScanner.scan(source, new SelectStorage(current).readWorking().bytes);
                 ScreenpackStatus screenpack = ScreenpackStatus.inspect(source);
                 runOnUiThread(() -> { if (sameBinding(current, currentBinding)) {
@@ -3027,6 +3158,7 @@ public final class MainActivity extends Activity {
         IO.execute(() -> {
             try {
                 requireReady(current, source, false);
+                source.requireActiveTarget(ScreenpackStatus.inspect(openSource(source)));
                 if (enabled) {
                     LibraryScanner.Item fresh = find(scanWorking(current, source), item);
                     if (fresh == null || fresh.warning != null || fresh.defNode == null)

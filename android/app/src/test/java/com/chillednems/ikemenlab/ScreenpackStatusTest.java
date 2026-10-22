@@ -48,4 +48,22 @@ public final class ScreenpackStatusTest {
         assertTrue(status.globalRoster);
         assertFalse(status.knownAlternate);
     }
+
+    @Test public void missingDefaultMotifUsesExistingGlobalRosterWithUnknownCapacity() throws Exception {
+        write("save/config.ini", "[Config]\nMotif = data/system.def\n");
+        write("data/select.def", "[Characters]\nKFM\n");
+        ScreenpackStatus status = ScreenpackStatus.inspect(LibraryFiles.local(temporary.getRoot()));
+        assertTrue(status.globalRoster);
+        assertEquals("data/select.def", status.select);
+        assertEquals(0, status.capacity());
+        assertNotNull(status.warning);
+    }
+
+    @Test public void missingCustomMotifDoesNotGuessGlobalRoster() throws Exception {
+        write("save/config.ini", "[Config]\nMotif = data/pack/system.def\n");
+        write("data/select.def", "[Characters]\nKFM\n");
+        ScreenpackStatus status = ScreenpackStatus.inspect(LibraryFiles.local(temporary.getRoot()));
+        assertFalse(status.globalRoster);
+        assertEquals("Unknown", status.select);
+    }
 }

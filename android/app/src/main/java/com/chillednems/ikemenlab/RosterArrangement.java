@@ -95,12 +95,19 @@ final class RosterArrangement {
     }
 
     byte[] moved(int position, int direction) {
-        int next = position + direction;
-        if (position < 0 || next < 0 || next >= slots.size() || Math.abs(direction) != 1)
+        if (Math.abs(direction) != 1) throw new IllegalArgumentException("Move must be one slot");
+        return movedTo(position, position + direction);
+    }
+
+    byte[] movedTo(int position, int destination) {
+        if (position < 0 || position >= slots.size() || destination < 0 || destination >= slots.size()
+                || position == destination)
             throw new IllegalArgumentException("Cannot move beyond roster bounds");
-        Line first = lines.get(slots.get(position).line);
-        Line second = lines.get(slots.get(next).line);
-        String old = first.text; first.text = second.text; second.text = old;
+        List<String> entries = new ArrayList<>();
+        for (Slot slot : slots) entries.add(lines.get(slot.line).text);
+        String moving = entries.remove(position);
+        entries.add(destination, moving);
+        for (int i = 0; i < slots.size(); i++) lines.get(slots.get(i).line).text = entries.get(i);
         StringBuilder content = new StringBuilder();
         for (Line line : lines) content.append(line.text).append(line.ending);
         byte[] result = content.toString().getBytes(encoding);
@@ -112,9 +119,14 @@ final class RosterArrangement {
     }
 
     static void moveWorking(File root, int position, int direction, Integer retention) throws IOException {
+        if (Math.abs(direction) != 1) throw new IllegalArgumentException("Move must be one slot");
+        moveWorkingTo(root, position, position + direction, retention);
+    }
+
+    static void moveWorkingTo(File root, int position, int destination, Integer retention) throws IOException {
         SelectStorage storage = new SelectStorage(root);
         SelectStorage.Snapshot snapshot = storage.readWorking();
-        byte[] replacement = new RosterArrangement(snapshot.bytes).moved(position, direction);
-        storage.commitWorking(snapshot.sha256, replacement, "reorder:slot:" + position, retention);
+        byte[] replacement = new RosterArrangement(snapshot.bytes).movedTo(position, destination);
+        storage.commitWorking(snapshot.sha256, replacement, "reorder:slot:" + position + ":" + destination, retention);
     }
 }

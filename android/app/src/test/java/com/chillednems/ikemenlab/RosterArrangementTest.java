@@ -46,4 +46,11 @@ public final class RosterArrangementTest {
         String moved = new String(arrangement.moved(0, 1), StandardCharsets.UTF_8);
         assertEquals("[Characters]\nB\n# note\n---\nrandom\nrandomselect/extra\nA\nrandomselect\nempty\n", moved);
     }
+
+    @Test public void movesDistantSlotWithParametersWithoutChangingMixedLineEndings() throws Exception {
+        String original = "[Characters]\r\nA, order=1 ; first\n; note\r\nB, order=2\r\nC, order=3";
+        RosterArrangement arrangement = new RosterArrangement(original.getBytes(StandardCharsets.UTF_8));
+        assertEquals("[Characters]\r\nC, order=3\n; note\r\nA, order=1 ; first\r\nB, order=2",
+                new String(arrangement.movedTo(2, 0), StandardCharsets.UTF_8));
+    }
 }
